@@ -5,14 +5,13 @@ pragma solidity 0.8.26;
 /// @notice Cross-contract event signatures. Indexed where the off-chain indexer
 ///         filters on the topic; keeps relayer subscriptions stable as contracts evolve.
 library ReckonEvents {
-    // Registrar
-    event SubnameRegistered(
-        bytes32 indexed node,
-        address indexed owner,
-        uint8 role,
-        string label
-    );
+    // Registrars (Solver / Challenger production registrars on Base)
+    event SolverRegistered(bytes32 indexed node, address indexed owner);
+    event SolverUnregistered(bytes32 indexed node);
+    event ChallengerRegistered(bytes32 indexed node, address indexed owner);
+    event ChallengerUnregistered(bytes32 indexed node);
     event TextSet(bytes32 indexed node, string key, string value);
+    event RelayerRotated(address indexed prev, address indexed next);
 
     // FillRegistry
     event FillRecorded(

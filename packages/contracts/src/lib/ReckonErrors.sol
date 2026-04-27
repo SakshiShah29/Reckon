@@ -13,6 +13,8 @@ library ReckonErrors {
     error NotNodeOwner();
     error UnauthorizedTextWriter();
     error SelfChallengeForbidden();
+    error NotRelayer();
+    error ZeroNode();
 
     // Validator
     error InvalidValidationData();
