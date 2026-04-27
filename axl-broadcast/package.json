@@ -1,0 +1,25 @@
+{
+  "name": "@reckon-protocol/axl-claim-broadcast",
+  "version": "0.1.0",
+  "description": "First-claim-wins dedup over Gensyn AXL mesh for Reckon challenger agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@reckon-protocol/types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT"
+}

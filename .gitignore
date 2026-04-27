@@ -1,3 +1,44 @@
+# Dependencies
+node_modules/
+.pnp.*
+
+# Build
+dist/
+out/
+.next/
+cache/
+
+# Foundry
+broadcast/
+cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+lcov.info
+
+# Temp
+tmp/
+*.tmp
 # Foundry
 **/cache/
 **/out/

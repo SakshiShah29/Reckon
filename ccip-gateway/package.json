@@ -1,0 +1,21 @@
+{
+  "name": "@reckon-protocol/ccip-gateway",
+  "version": "0.1.0",
+  "description": "CCIP-Read (ENSIP-10) gateway for live solver reputation from MongoDB",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --import tsx src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@reckon-protocol/types": "*",
+    "mongodb": "^6.10.0",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
