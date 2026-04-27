@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {IReckonRegistrar} from "./interfaces/IReckonRegistrar.sol";
+import {ReckonErrors} from "./lib/ReckonErrors.sol";
+import {ReckonEvents} from "./lib/ReckonEvents.sol";
+
+/// @title SolverBondVault
+/// @notice Holds USDC bonds for solvers, keyed by ENS namehash. Locks happen on
+///         fill recording and unlock when challenge windows close. Slashing is
+///         restricted to the Challenger contract.
+contract SolverBondVault is Ownable {
+    using SafeERC20 for IERC20;
+
+    string internal constant REPUTATION_KEY = "reckon.reputation";
+    uint256 internal constant REPUTATION_SCALE = 1e18;
+
+    IERC20 public immutable usdc;
+    IReckonRegistrar public immutable registrar;
+
+    uint256 public baseBond = 1000e6;   // 1000 USDC
+    uint256 public floorBond = 100e6;   // 100 USDC
+
+    mapping(bytes32 node => uint256) public bondedAmount;
+    mapping(bytes32 node => uint256) public lockedAmount;
+
+    /// @notice Address of the Challenger contract (the only caller permitted to
+    ///         lock/unlock/slash bonds). Set once via `setChallenger`.
+    address public challenger;
+
+    constructor(address initialOwner, IERC20 _usdc, IReckonRegistrar _registrar) Ownable(initialOwner) {
+        if (address(_usdc) == address(0) || address(_registrar) == address(0)) {
+            revert ReckonErrors.ZeroAddress();
+        }
+        usdc = _usdc;
+        registrar = _registrar;
+    }
+
+    /// @notice One-shot setter for the Challenger contract address. Owner only.
+    function setChallenger(address _challenger) external onlyOwner {
+        if (_challenger == address(0)) revert ReckonErrors.ZeroAddress();
+        if (challenger != address(0)) revert ReckonErrors.AlreadyInitialized();
+        challenger = _challenger;
+    }
+
+    /// @notice Deposit USDC bond on behalf of the caller's registered subname.
+    function deposit(uint256 amount) external {
+        bytes32 node = registrar.namehashOf(msg.sender);
+        bondedAmount[node] += amount;
+        emit ReckonEvents.BondDeposited(node, amount);
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+    }
+
+    /// @notice Required bond for a node, decayed linearly by reputation.
+    /// @dev Reputation is stored as a decimal-string text record at `reckon.reputation`,
+    ///      scaled to 1e18 (0 = no reputation, 1e18 = max). Falls back to `baseBond`
+    ///      on missing/malformed text record.
+    function requiredBond(bytes32 node) external view returns (uint256) {
+        (uint256 rep, bool ok) = _parseUint(registrar.getText(node, REPUTATION_KEY));
+        if (!ok) return baseBond;
+        if (rep >= REPUTATION_SCALE) return floorBond;
+        // linear interpolation: bond = baseBond - rep/1e18 * (baseBond - floorBond)
+        uint256 spread = baseBond - floorBond;
+        return baseBond - (rep * spread) / REPUTATION_SCALE;
+    }
+
+    /// @notice Lock part of a node's bond. Challenger only.
+    /// @dev Caller is expected to enforce semantics (e.g., per-fill counter); the
+    ///      vault only ensures `bondedAmount[node] >= lockedAmount[node]`.
+    function lock(bytes32 node, uint256 amount) external {
+        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        uint256 newLocked = lockedAmount[node] + amount;
+        if (newLocked > bondedAmount[node]) revert ReckonErrors.InsufficientBond();
+        lockedAmount[node] = newLocked;
+        emit ReckonEvents.BondLocked(node, amount);
+    }
+
+    /// @notice Release a previously-locked portion. Challenger only.
+    function unlock(bytes32 node, uint256 amount) external {
+        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        uint256 current = lockedAmount[node];
+        if (amount > current) revert ReckonErrors.AmountLocked();
+        unchecked {
+            lockedAmount[node] = current - amount;
+        }
+        emit ReckonEvents.BondUnlocked(node, amount);
+    }
+
+    /// @notice Slash up to `amount` from the node's bond and transfer to `to`.
+    /// @dev Caps at the available bonded amount. Decrements both bonded and locked
+    ///      proportionally (locked is decremented up to `actual`). Returns the
+    ///      actual amount slashed.
+    function slash(bytes32 node, uint256 amount, address to) external returns (uint256) {
+        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        if (to == address(0)) revert ReckonErrors.ZeroAddress();
+
+        uint256 bonded = bondedAmount[node];
+        uint256 actual = amount > bonded ? bonded : amount;
+        if (actual == 0) return 0;
+
+        uint256 locked = lockedAmount[node];
+        uint256 lockedDelta = actual > locked ? locked : actual;
+
+        bondedAmount[node] = bonded - actual;
+        if (lockedDelta != 0) {
+            unchecked {
+                lockedAmount[node] = locked - lockedDelta;
+            }
+        }
+        emit ReckonEvents.BondSlashed(node, actual, to);
+
+        usdc.safeTransfer(to, actual);
+        return actual;
+    }
+
+    /// @notice Amount currently withdrawable for `node` (bonded minus locked).
+    function withdrawable(bytes32 node) public view returns (uint256) {
+        return bondedAmount[node] - lockedAmount[node];
+    }
+
+    /// @notice Withdraw unlocked bond back to the caller. Reverts if any portion
+    ///         being withdrawn is currently locked against open challenge windows.
+    function withdraw(uint256 amount) external {
+        bytes32 node = registrar.namehashOf(msg.sender);
+        uint256 free = withdrawable(node);
+        if (amount > free) revert ReckonErrors.AmountLocked();
+
+        bondedAmount[node] -= amount;
+        emit ReckonEvents.BondWithdrawn(node, msg.sender, amount);
+
+        usdc.safeTransfer(msg.sender, amount);
+    }
+
+    /// @dev Parse a decimal string into a uint256. Returns (0, false) on empty
+    ///      input or any non-digit character. No leading-zero / overflow guard
+    ///      beyond uint256 wrap (caller controls input via the registrar).
+    function _parseUint(string memory s) internal pure returns (uint256, bool) {
+        bytes memory b = bytes(s);
+        if (b.length == 0) return (0, false);
+        uint256 acc;
+        for (uint256 i; i < b.length; ++i) {
+            uint8 c = uint8(b[i]);
+            if (c < 0x30 || c > 0x39) return (0, false);
+            acc = acc * 10 + (c - 0x30);
+        }
+        return (acc, true);
+    }
+}

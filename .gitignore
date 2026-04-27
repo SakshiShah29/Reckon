@@ -39,3 +39,15 @@ lcov.info
 # Temp
 tmp/
 *.tmp
+# Foundry
+**/cache/
+**/out/
+**/broadcast/
+**/foundry.lock
+
+# Deps / build
+node_modules/
+
+# Env / secrets
+.env
+.env.local

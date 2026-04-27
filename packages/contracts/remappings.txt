@@ -1,0 +1,7 @@
+forge-std/=lib/forge-std/src/
+@openzeppelin/=lib/openzeppelin-contracts/contracts/
+permit2/=lib/permit2/src/
+v3-core/=lib/v3-core/contracts/
+v4-core/=lib/v4-core/src/
+uniswapx/=lib/UniswapX/src/
+prb-math/=lib/prb-math/src/
