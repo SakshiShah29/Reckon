@@ -50,7 +50,7 @@ contract RoyaltyDistributorTest is Test {
         vm.startPrank(admin);
         vault.setFillRegistry(address(fillReg));
         vault.setRoyaltyDistributor(address(distributor));
-        vault.addChallenger(challengerContract);
+        vault.setChallenger(challengerContract);
         distributor.setSolverBondVault(address(vault));
         vm.stopPrank();
 

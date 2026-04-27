@@ -36,8 +36,6 @@ library ReckonEvents {
     event BondWithdrawn(bytes32 indexed node, address indexed to, uint256 amount);
     event FillLocked(bytes32 indexed node, uint256 newOpenFillCount);
     event FillUnlocked(bytes32 indexed node, uint256 newOpenFillCount);
-    event ChallengerAdded(address indexed challenger);
-    event ChallengerRemoved(address indexed challenger);
 
     // Challenger
     event ChallengeSubmitted(
@@ -46,8 +44,13 @@ library ReckonEvents {
         uint256 agentTokenId,
         uint256 challengerBond
     );
-    event ChallengeSucceeded(bytes32 indexed orderHash, uint256 slashAmount);
-    event ChallengeFailed(bytes32 indexed orderHash, address challenger);
+    event ChallengeSucceeded(
+        bytes32 indexed orderHash,
+        bytes32 indexed fillerNamehash,
+        bytes32 indexed challengerNode,
+        uint256 slashAmount
+    );
+    event ChallengeFailed(bytes32 indexed orderHash, bytes32 indexed fillerNamehash, address challenger);
 
     // RoyaltyDistributor
     event RoyaltyPaid(

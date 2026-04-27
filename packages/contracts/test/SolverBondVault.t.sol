@@ -50,7 +50,6 @@ contract SolverBondVaultTest is Test {
         assertEq(vault.owner(), admin);
         assertEq(vault.baseBond(), 1000e6);
         assertEq(vault.floorBond(), 100e6);
-        assertFalse(vault.isChallenger(challenger));
     }
 
     function test_constructor_reverts_on_zero_usdc() public {
@@ -63,66 +62,30 @@ contract SolverBondVaultTest is Test {
         new SolverBondVault(admin, usdc, MockReckonRegistrar(address(0)));
     }
 
-    function test_addChallenger_writes_and_emits() public {
-        vm.expectEmit(true, false, false, false, address(vault));
-        emit ReckonEvents.ChallengerAdded(challenger);
+    function test_setChallenger_writes() public {
         vm.prank(admin);
-        vault.addChallenger(challenger);
-        assertTrue(vault.isChallenger(challenger));
+        vault.setChallenger(challenger);
+        assertEq(vault.challenger(), challenger);
     }
 
-    function test_addChallenger_only_owner() public {
+    function test_setChallenger_only_owner() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
-        vault.addChallenger(challenger);
+        vault.setChallenger(challenger);
     }
 
-    function test_addChallenger_reverts_on_zero() public {
+    function test_setChallenger_reverts_on_zero() public {
         vm.prank(admin);
         vm.expectRevert(ReckonErrors.ZeroAddress.selector);
-        vault.addChallenger(address(0));
+        vault.setChallenger(address(0));
     }
 
-    function test_addChallenger_reverts_on_duplicate() public {
+    function test_setChallenger_reverts_on_second_call() public {
         vm.startPrank(admin);
-        vault.addChallenger(challenger);
-        vm.expectRevert(ReckonErrors.ChallengerAlreadyAdded.selector);
-        vault.addChallenger(challenger);
+        vault.setChallenger(challenger);
+        vm.expectRevert(ReckonErrors.AlreadyInitialized.selector);
+        vault.setChallenger(makeAddr("other"));
         vm.stopPrank();
-    }
-
-    function test_addChallenger_supports_multiple() public {
-        address c2 = makeAddr("challenger2");
-        vm.startPrank(admin);
-        vault.addChallenger(challenger);
-        vault.addChallenger(c2);
-        vm.stopPrank();
-        assertTrue(vault.isChallenger(challenger));
-        assertTrue(vault.isChallenger(c2));
-    }
-
-    function test_removeChallenger_clears_and_emits() public {
-        vm.startPrank(admin);
-        vault.addChallenger(challenger);
-        vm.expectEmit(true, false, false, false, address(vault));
-        emit ReckonEvents.ChallengerRemoved(challenger);
-        vault.removeChallenger(challenger);
-        vm.stopPrank();
-        assertFalse(vault.isChallenger(challenger));
-    }
-
-    function test_removeChallenger_only_owner() public {
-        vm.prank(admin);
-        vault.addChallenger(challenger);
-        vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
-        vault.removeChallenger(challenger);
-    }
-
-    function test_removeChallenger_reverts_when_not_added() public {
-        vm.prank(admin);
-        vm.expectRevert(ReckonErrors.ChallengerNotFound.selector);
-        vault.removeChallenger(challenger);
     }
 
     // -- deposit --
@@ -210,7 +173,7 @@ contract SolverBondVaultTest is Test {
         vm.prank(solver);
         vault.deposit(1000e6);
         vm.prank(admin);
-        vault.addChallenger(challenger);
+        vault.setChallenger(challenger);
     }
 
     function test_lock_only_challenger() public {
@@ -313,7 +276,7 @@ contract SolverBondVaultTest is Test {
 
     function test_slash_zero_when_no_bond() public {
         vm.prank(admin);
-        vault.addChallenger(challenger);
+        vault.setChallenger(challenger);
         vm.prank(challenger);
         uint256 actual = vault.slash(solverNode, 100e6, orderHash, tokenId);
         assertEq(actual, 0);

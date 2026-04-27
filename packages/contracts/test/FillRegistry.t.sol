@@ -196,60 +196,32 @@ contract FillRegistryTest is Test {
         registry.anchorBatch(root, first, last);
     }
 
-    // -- addChallenger / removeChallenger --
+    // -- setChallenger --
 
-    function test_addChallenger_writes_and_emits() public {
-        vm.expectEmit(true, false, false, false, address(registry));
-        emit ReckonEvents.ChallengerAdded(challengerContract);
+    function test_setChallenger_writes() public {
         vm.prank(admin);
-        registry.addChallenger(challengerContract);
-        assertTrue(registry.isChallenger(challengerContract));
+        registry.setChallenger(challengerContract);
+        assertEq(registry.challenger(), challengerContract);
     }
 
-    function test_addChallenger_only_owner() public {
+    function test_setChallenger_only_owner() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
-        registry.addChallenger(challengerContract);
+        registry.setChallenger(challengerContract);
     }
 
-    function test_addChallenger_reverts_on_zero() public {
+    function test_setChallenger_reverts_on_zero() public {
         vm.prank(admin);
         vm.expectRevert(ReckonErrors.ZeroAddress.selector);
-        registry.addChallenger(address(0));
+        registry.setChallenger(address(0));
     }
 
-    function test_addChallenger_reverts_on_duplicate() public {
+    function test_setChallenger_reverts_on_second_call() public {
         vm.startPrank(admin);
-        registry.addChallenger(challengerContract);
-        vm.expectRevert(ReckonErrors.ChallengerAlreadyAdded.selector);
-        registry.addChallenger(challengerContract);
+        registry.setChallenger(challengerContract);
+        vm.expectRevert(ReckonErrors.AlreadyInitialized.selector);
+        registry.setChallenger(makeAddr("other"));
         vm.stopPrank();
-    }
-
-    function test_addChallenger_supports_multiple() public {
-        address c2 = makeAddr("challenger2");
-        vm.startPrank(admin);
-        registry.addChallenger(challengerContract);
-        registry.addChallenger(c2);
-        vm.stopPrank();
-        assertTrue(registry.isChallenger(challengerContract));
-        assertTrue(registry.isChallenger(c2));
-    }
-
-    function test_removeChallenger_clears_and_emits() public {
-        vm.startPrank(admin);
-        registry.addChallenger(challengerContract);
-        vm.expectEmit(true, false, false, false, address(registry));
-        emit ReckonEvents.ChallengerRemoved(challengerContract);
-        registry.removeChallenger(challengerContract);
-        vm.stopPrank();
-        assertFalse(registry.isChallenger(challengerContract));
-    }
-
-    function test_removeChallenger_reverts_when_not_added() public {
-        vm.prank(admin);
-        vm.expectRevert(ReckonErrors.ChallengerNotFound.selector);
-        registry.removeChallenger(challengerContract);
     }
 
     // -- getFill --
@@ -278,7 +250,7 @@ contract FillRegistryTest is Test {
 
     function _wireChallenger() internal {
         vm.prank(admin);
-        registry.addChallenger(challengerContract);
+        registry.setChallenger(challengerContract);
     }
 
     function test_markSlashed_only_challenger() public {

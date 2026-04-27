@@ -33,9 +33,9 @@ contract FillRegistry is Ownable {
     /// @notice The relayer EOA permitted to write fills. Rotatable by owner.
     address public recorder;
 
-    /// @notice Set of Challenger contracts permitted to mark fills as slashed.
-    ///         Mutated via `addChallenger` / `removeChallenger`.
-    mapping(address => bool) public isChallenger;
+    /// @notice The Challenger contract permitted to mark fills as slashed.
+    ///         Set once via `setChallenger`.
+    address public challenger;
 
     /// @notice Default challenge window (≈ 30 min on Base 1s blocks).
     uint64 public challengeWindowBlocks = 1800;
@@ -66,19 +66,11 @@ contract FillRegistry is Ownable {
         recorder = next;
     }
 
-    /// @notice Authorize a Challenger contract. Owner only. Repeatable.
-    function addChallenger(address _challenger) external onlyOwner {
+    /// @notice One-shot setter for the Challenger contract address. Owner only.
+    function setChallenger(address _challenger) external onlyOwner {
         if (_challenger == address(0)) revert ReckonErrors.ZeroAddress();
-        if (isChallenger[_challenger]) revert ReckonErrors.ChallengerAlreadyAdded();
-        isChallenger[_challenger] = true;
-        emit ReckonEvents.ChallengerAdded(_challenger);
-    }
-
-    /// @notice Revoke a previously-authorized Challenger contract. Owner only.
-    function removeChallenger(address _challenger) external onlyOwner {
-        if (!isChallenger[_challenger]) revert ReckonErrors.ChallengerNotFound();
-        isChallenger[_challenger] = false;
-        emit ReckonEvents.ChallengerRemoved(_challenger);
+        if (challenger != address(0)) revert ReckonErrors.AlreadyInitialized();
+        challenger = _challenger;
     }
 
     /// @notice Record an observed UniswapX fill. Recorder only.
@@ -143,7 +135,7 @@ contract FillRegistry is Ownable {
     /// @notice Mark a fill as slashed. Challenger only. Drives the bond-unlock
     ///         path so the solver isn't double-locked after their slash settles.
     function markSlashed(bytes32 orderHash) external {
-        if (!isChallenger[msg.sender]) revert ReckonErrors.NotChallenger();
+        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
         FillRecord storage r = fills[orderHash];
         if (r.fillBlock == 0) revert ReckonErrors.FillNotFound();
         if (r.slashed) revert ReckonErrors.AlreadySlashed();
