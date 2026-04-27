@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
-import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
 import {SD59x18, sd, convert} from "prb-math/SD59x18.sol";
 import {ReckonErrors} from "./lib/ReckonErrors.sol";

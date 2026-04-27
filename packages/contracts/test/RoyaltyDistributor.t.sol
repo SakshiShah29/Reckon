@@ -2,8 +2,8 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RoyaltyDistributor} from "../src/RoyaltyDistributor.sol";
 import {SolverBondVault} from "../src/SolverBondVault.sol";
 import {FillRegistry} from "../src/FillRegistry.sol";

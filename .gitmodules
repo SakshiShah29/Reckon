@@ -19,3 +19,9 @@
 [submodule "packages/contracts/lib/prb-math"]
 	path = packages/contracts/lib/prb-math
 	url = https://github.com/PaulRBerg/prb-math
+[submodule "packages/contracts/lib/0g-agent-nft"]
+	path = packages/contracts/lib/0g-agent-nft
+	url = https://github.com/0gfoundation/0g-agent-nft
+[submodule "packages/contracts/lib/openzeppelin-contracts-upgradeable"]
+	path = packages/contracts/lib/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable

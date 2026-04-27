@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ChallengerRegistry} from "../src/ChallengerRegistry.sol";
 import {IReckonNamehashLookup} from "../src/interfaces/IReckonNamehashLookup.sol";
 import {ReckonErrors} from "../src/lib/ReckonErrors.sol";

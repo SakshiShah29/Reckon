@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {OwnerRegistry} from "../src/OwnerRegistry.sol";
 import {ReckonErrors} from "../src/lib/ReckonErrors.sol";
 import {ReckonEvents} from "../src/lib/ReckonEvents.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract OwnerRegistryTest is Test {
     OwnerRegistry internal registry;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IReckonRegistrar} from "./interfaces/IReckonRegistrar.sol";
 import {ReckonErrors} from "./lib/ReckonErrors.sol";
 import {ReckonEvents} from "./lib/ReckonEvents.sol";
