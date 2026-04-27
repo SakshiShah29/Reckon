@@ -26,6 +26,7 @@ library ReckonEvents {
         bytes32 lastOrderHash
     );
     event FillSlashedMarked(bytes32 indexed orderHash);
+    event RecorderRotated(address indexed prev, address indexed next);
 
     // SolverBondVault
     event BondDeposited(bytes32 indexed node, uint256 amount);
@@ -35,6 +36,8 @@ library ReckonEvents {
     event BondWithdrawn(bytes32 indexed node, address indexed to, uint256 amount);
     event FillLocked(bytes32 indexed node, uint256 newOpenFillCount);
     event FillUnlocked(bytes32 indexed node, uint256 newOpenFillCount);
+    event ChallengerAdded(address indexed challenger);
+    event ChallengerRemoved(address indexed challenger);
 
     // Challenger
     event ChallengeSubmitted(

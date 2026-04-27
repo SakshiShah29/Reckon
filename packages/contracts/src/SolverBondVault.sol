@@ -27,9 +27,9 @@ contract SolverBondVault is Ownable {
     mapping(bytes32 node => uint256) public bondedAmount;
     mapping(bytes32 node => uint256) public lockedAmount;
 
-    /// @notice Address of the Challenger contract (the only caller permitted to
-    ///         lock/unlock/slash bonds). Set once via `setChallenger`.
-    address public challenger;
+    /// @notice Set of contracts permitted to lock/unlock/slash bonds. Mutated
+    ///         via `addChallenger` / `removeChallenger` (owner-only, repeatable).
+    mapping(address => bool) public isChallenger;
 
     /// @notice Address of the FillRegistry (the only caller permitted to bump
     ///         `openFillCount`). Set once via `setFillRegistry`.
@@ -47,11 +47,19 @@ contract SolverBondVault is Ownable {
         registrar = _registrar;
     }
 
-    /// @notice One-shot setter for the Challenger contract address. Owner only.
-    function setChallenger(address _challenger) external onlyOwner {
+    /// @notice Authorize a Challenger contract. Owner only. Repeatable.
+    function addChallenger(address _challenger) external onlyOwner {
         if (_challenger == address(0)) revert ReckonErrors.ZeroAddress();
-        if (challenger != address(0)) revert ReckonErrors.AlreadyInitialized();
-        challenger = _challenger;
+        if (isChallenger[_challenger]) revert ReckonErrors.ChallengerAlreadyAdded();
+        isChallenger[_challenger] = true;
+        emit ReckonEvents.ChallengerAdded(_challenger);
+    }
+
+    /// @notice Revoke a previously-authorized Challenger contract. Owner only.
+    function removeChallenger(address _challenger) external onlyOwner {
+        if (!isChallenger[_challenger]) revert ReckonErrors.ChallengerNotFound();
+        isChallenger[_challenger] = false;
+        emit ReckonEvents.ChallengerRemoved(_challenger);
     }
 
     /// @notice One-shot setter for the FillRegistry contract address. Owner only.
@@ -86,7 +94,7 @@ contract SolverBondVault is Ownable {
     /// @dev Caller is expected to enforce semantics (e.g., per-fill counter); the
     ///      vault only ensures `bondedAmount[node] >= lockedAmount[node]`.
     function lock(bytes32 node, uint256 amount) external {
-        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        if (!isChallenger[msg.sender]) revert ReckonErrors.NotChallenger();
         uint256 newLocked = lockedAmount[node] + amount;
         if (newLocked > bondedAmount[node]) revert ReckonErrors.InsufficientBond();
         lockedAmount[node] = newLocked;
@@ -95,7 +103,7 @@ contract SolverBondVault is Ownable {
 
     /// @notice Release a previously-locked portion. Challenger only.
     function unlock(bytes32 node, uint256 amount) external {
-        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        if (!isChallenger[msg.sender]) revert ReckonErrors.NotChallenger();
         uint256 current = lockedAmount[node];
         if (amount > current) revert ReckonErrors.AmountLocked();
         unchecked {
@@ -109,7 +117,7 @@ contract SolverBondVault is Ownable {
     ///      proportionally (locked is decremented up to `actual`). Returns the
     ///      actual amount slashed.
     function slash(bytes32 node, uint256 amount, address to) external returns (uint256) {
-        if (msg.sender != challenger) revert ReckonErrors.NotChallenger();
+        if (!isChallenger[msg.sender]) revert ReckonErrors.NotChallenger();
         if (to == address(0)) revert ReckonErrors.ZeroAddress();
 
         uint256 bonded = bondedAmount[node];

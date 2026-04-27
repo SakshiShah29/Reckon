@@ -27,8 +27,10 @@ library ReckonErrors {
     error FillNotFound();
     error AlreadySlashed();
 
-    // SolverBondVault
+    // SolverBondVault / FillRegistry / shared
     error NotChallenger();
+    error ChallengerAlreadyAdded();
+    error ChallengerNotFound();
     error NotFillRegistry();
     error InsufficientBond();
     error AmountLocked();
