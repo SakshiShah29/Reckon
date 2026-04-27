@@ -14,8 +14,12 @@ async function main() {
 
   const db = await createDb(mongoUri);
 
+  const resolverAddress = process.env.RESOLVER_ADDRESS
+    ? (process.env.RESOLVER_ADDRESS as Address)
+    : undefined;
+
   const app = createApp({
-    resolverAddress: process.env.RESOLVER_ADDRESS as Address,
+    resolverAddress,
     chainId: parseInt(process.env.CHAIN_ID || "1", 10),
     signerKey: process.env.SIGNER_PRIVATE_KEY as Hex,
     db,

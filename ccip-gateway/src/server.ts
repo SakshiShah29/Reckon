@@ -4,7 +4,7 @@ import { createCcipRouter, type CcipRouteConfig } from "./routes/ccip.js";
 import type { GatewayDb } from "./db.js";
 
 export interface AppDeps {
-  resolverAddress: Address;
+  resolverAddress?: Address;
   chainId: number;
   signerKey: Hex;
   db: GatewayDb;
@@ -17,7 +17,7 @@ export function createApp(deps?: Partial<AppDeps>) {
     res.json({ status: "ok" });
   });
 
-  if (deps?.db && deps.resolverAddress && deps.signerKey) {
+  if (deps?.db && deps.signerKey) {
     const ccipRouter = createCcipRouter({
       db: deps.db,
       resolverAddress: deps.resolverAddress,

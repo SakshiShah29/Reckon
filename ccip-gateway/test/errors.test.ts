@@ -120,6 +120,49 @@ describe("error handling", () => {
     expect(res.body.error).toBe("sender mismatch");
   });
 
+  it("accepts any sender in permissive mode (no resolverAddress)", async () => {
+    const records = new Map<Hex, SubnameRecord>();
+    records.set(ALICE_NODE, {
+      label: "alice",
+      namespace: "solvers",
+      owner: "0x00000000000000000000000000000000000A11CE",
+      textRecords: { "reckon.reputation": "500000000000000000" },
+    });
+
+    const app = createApp({
+      chainId: CHAIN_ID,
+      signerKey: SIGNER_KEY,
+      db: createMockDb(records),
+    });
+
+    const textAbi = [
+      {
+        name: "text",
+        type: "function",
+        inputs: [
+          { name: "node", type: "bytes32" },
+          { name: "key", type: "string" },
+        ],
+        outputs: [{ type: "string" }],
+        stateMutability: "view",
+      },
+    ] as const;
+
+    const callData = encodeFunctionData({
+      abi: textAbi,
+      functionName: "text",
+      args: [ALICE_NODE as `0x${string}`, "reckon.reputation"],
+    });
+    const anySender = "0x0000000000000000000000000000000000000001";
+
+    const res = await requestJson(
+      app,
+      `/${anySender}/${callData.slice(2)}.json`
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data).toBeDefined();
+  });
+
   it("returns 500 when DB throws", async () => {
     const failingDb: GatewayDb = {
       async lookupByNamehash() {

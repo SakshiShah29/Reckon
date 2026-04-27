@@ -14,7 +14,7 @@ import type { GatewayDb } from "../db.js";
 
 export interface CcipRouteConfig {
   db: GatewayDb;
-  resolverAddress: Address;
+  resolverAddress?: Address;
   chainId: number;
   signerKey: Hex;
 }
@@ -27,7 +27,7 @@ export function createCcipRouter(config: CcipRouteConfig): Router {
       const { sender, data } = req.params;
 
       if (
-        !sender ||
+        config.resolverAddress &&
         sender.toLowerCase() !== config.resolverAddress.toLowerCase()
       ) {
         res.status(400).json({ error: "sender mismatch" });
@@ -82,11 +82,13 @@ export function createCcipRouter(config: CcipRouteConfig): Router {
 
       const expires = BigInt(Math.floor(Date.now() / 1000) + 300);
 
+      const resolverAddr = (config.resolverAddress ?? sender) as Address;
+
       const sig = await signResponse({
         result,
         expires,
         extraData,
-        resolverAddress: config.resolverAddress,
+        resolverAddress: resolverAddr,
         chainId: config.chainId,
         signerKey: config.signerKey,
       });
