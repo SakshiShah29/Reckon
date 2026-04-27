@@ -5,6 +5,7 @@ import {Ownable} from "@openzeppelin/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {IReckonRegistrar} from "./interfaces/IReckonRegistrar.sol";
+import {IRoyaltyDistributor} from "./interfaces/IRoyaltyDistributor.sol";
 import {ReckonErrors} from "./lib/ReckonErrors.sol";
 import {ReckonEvents} from "./lib/ReckonEvents.sol";
 
@@ -34,6 +35,10 @@ contract SolverBondVault is Ownable {
     /// @notice Address of the FillRegistry (the only caller permitted to bump
     ///         `openFillCount`). Set once via `setFillRegistry`.
     address public fillRegistry;
+
+    /// @notice RoyaltyDistributor that receives slashed funds for splitting.
+    ///         Set once via `setRoyaltyDistributor`.
+    IRoyaltyDistributor public royaltyDistributor;
 
     /// @notice Per-node count of fills currently inside their challenge window.
     ///         While > 0, the solver cannot withdraw any bond.
@@ -67,6 +72,13 @@ contract SolverBondVault is Ownable {
         if (_fillRegistry == address(0)) revert ReckonErrors.ZeroAddress();
         if (fillRegistry != address(0)) revert ReckonErrors.AlreadyInitialized();
         fillRegistry = _fillRegistry;
+    }
+
+    /// @notice One-shot setter for the RoyaltyDistributor address. Owner only.
+    function setRoyaltyDistributor(address _royaltyDistributor) external onlyOwner {
+        if (_royaltyDistributor == address(0)) revert ReckonErrors.ZeroAddress();
+        if (address(royaltyDistributor) != address(0)) revert ReckonErrors.AlreadyInitialized();
+        royaltyDistributor = IRoyaltyDistributor(_royaltyDistributor);
     }
 
     /// @notice Deposit USDC bond on behalf of the caller's registered subname.
@@ -112,13 +124,13 @@ contract SolverBondVault is Ownable {
         emit ReckonEvents.BondUnlocked(node, amount);
     }
 
-    /// @notice Slash up to `amount` from the node's bond and transfer to `to`.
+    /// @notice Slash up to `amount` from the node's bond, transfer to
+    ///         RoyaltyDistributor, and trigger distribution. Challenger only.
     /// @dev Caps at the available bonded amount. Decrements both bonded and locked
     ///      proportionally (locked is decremented up to `actual`). Returns the
     ///      actual amount slashed.
-    function slash(bytes32 node, uint256 amount, address to) external returns (uint256) {
+    function slash(bytes32 node, uint256 amount, bytes32 orderHash, uint256 tokenId) external returns (uint256) {
         if (!isChallenger[msg.sender]) revert ReckonErrors.NotChallenger();
-        if (to == address(0)) revert ReckonErrors.ZeroAddress();
 
         uint256 bonded = bondedAmount[node];
         uint256 actual = amount > bonded ? bonded : amount;
@@ -133,9 +145,12 @@ contract SolverBondVault is Ownable {
                 lockedAmount[node] = locked - lockedDelta;
             }
         }
-        emit ReckonEvents.BondSlashed(node, actual, to);
 
-        usdc.safeTransfer(to, actual);
+        address distributor = address(royaltyDistributor);
+        emit ReckonEvents.BondSlashed(node, actual, distributor);
+
+        usdc.safeTransfer(distributor, actual);
+        royaltyDistributor.distribute(actual, orderHash, tokenId);
         return actual;
     }
 

@@ -55,6 +55,7 @@ library ReckonErrors {
     error AttestationStale();
 
     // RoyaltyDistributor
+    error NotSolverBondVault();
     error InvalidSplit();
     error NothingQueued();
 

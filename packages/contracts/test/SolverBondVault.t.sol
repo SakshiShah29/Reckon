@@ -7,12 +7,14 @@ import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {SolverBondVault} from "../src/SolverBondVault.sol";
 import {MockReckonRegistrar} from "./mocks/MockReckonRegistrar.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {MockRoyaltyDistributor} from "./mocks/MockRoyaltyDistributor.sol";
 import {ReckonErrors} from "../src/lib/ReckonErrors.sol";
 import {ReckonEvents} from "../src/lib/ReckonEvents.sol";
 
 contract SolverBondVaultTest is Test {
     SolverBondVault internal vault;
     MockReckonRegistrar internal registrar;
+    MockRoyaltyDistributor internal mockDistributor;
 
     MockUSDC internal usdc;
 
@@ -22,11 +24,17 @@ contract SolverBondVaultTest is Test {
     address internal stranger = makeAddr("stranger");
     address internal solver = makeAddr("solver");
     bytes32 internal solverNode = keccak256("solver.solvers.reckon.eth");
+    bytes32 internal orderHash = keccak256("orderHash.1");
+    uint256 internal tokenId = 1;
 
     function setUp() public {
         usdc = new MockUSDC();
         registrar = new MockReckonRegistrar();
+        mockDistributor = new MockRoyaltyDistributor();
         vault = new SolverBondVault(admin, IERC20(address(usdc)), registrar);
+        vm.startPrank(admin);
+        vault.setRoyaltyDistributor(address(mockDistributor));
+        vm.stopPrank();
         registrar.mint(solver, solverNode, MockReckonRegistrar.Role.Solver);
     }
 
@@ -257,41 +265,35 @@ contract SolverBondVaultTest is Test {
         _depositAndWireChallenger();
         vm.prank(stranger);
         vm.expectRevert(ReckonErrors.NotChallenger.selector);
-        vault.slash(solverNode, 100e6, makeAddr("recipient"));
+        vault.slash(solverNode, 100e6, orderHash, tokenId);
     }
 
-    function test_slash_reverts_on_zero_recipient() public {
+    function test_slash_transfers_to_distributor_and_decrements() public {
         _depositAndWireChallenger();
         vm.prank(challenger);
-        vm.expectRevert(ReckonErrors.ZeroAddress.selector);
-        vault.slash(solverNode, 100e6, address(0));
-    }
-
-    function test_slash_transfers_and_decrements() public {
-        _depositAndWireChallenger();
-        address recipient = makeAddr("recipient");
-        vm.prank(challenger);
-        uint256 actual = vault.slash(solverNode, 250e6, recipient);
+        uint256 actual = vault.slash(solverNode, 250e6, orderHash, tokenId);
         assertEq(actual, 250e6);
         assertEq(vault.bondedAmount(solverNode), 750e6);
-        assertEq(usdc.balanceOf(recipient), 250e6);
+        assertEq(usdc.balanceOf(address(mockDistributor)), 250e6);
+        assertEq(mockDistributor.lastOrderHash(), orderHash);
+        assertEq(mockDistributor.lastTokenId(), tokenId);
+        assertEq(mockDistributor.lastAmount(), 250e6);
     }
 
     function test_slash_caps_at_bonded() public {
         _depositAndWireChallenger();
-        address recipient = makeAddr("recipient");
         vm.prank(challenger);
-        uint256 actual = vault.slash(solverNode, 5000e6, recipient);
+        uint256 actual = vault.slash(solverNode, 5000e6, orderHash, tokenId);
         assertEq(actual, 1000e6);
         assertEq(vault.bondedAmount(solverNode), 0);
-        assertEq(usdc.balanceOf(recipient), 1000e6);
+        assertEq(usdc.balanceOf(address(mockDistributor)), 1000e6);
     }
 
     function test_slash_decrements_locked_partially() public {
         _depositAndWireChallenger();
         vm.startPrank(challenger);
         vault.lock(solverNode, 600e6);
-        uint256 actual = vault.slash(solverNode, 200e6, makeAddr("r"));
+        uint256 actual = vault.slash(solverNode, 200e6, orderHash, tokenId);
         vm.stopPrank();
         assertEq(actual, 200e6);
         assertEq(vault.lockedAmount(solverNode), 400e6);
@@ -302,7 +304,7 @@ contract SolverBondVaultTest is Test {
         _depositAndWireChallenger();
         vm.startPrank(challenger);
         vault.lock(solverNode, 100e6);
-        uint256 actual = vault.slash(solverNode, 500e6, makeAddr("r"));
+        uint256 actual = vault.slash(solverNode, 500e6, orderHash, tokenId);
         vm.stopPrank();
         assertEq(actual, 500e6);
         assertEq(vault.lockedAmount(solverNode), 0);
@@ -313,7 +315,7 @@ contract SolverBondVaultTest is Test {
         vm.prank(admin);
         vault.addChallenger(challenger);
         vm.prank(challenger);
-        uint256 actual = vault.slash(solverNode, 100e6, makeAddr("r"));
+        uint256 actual = vault.slash(solverNode, 100e6, orderHash, tokenId);
         assertEq(actual, 0);
     }
 
