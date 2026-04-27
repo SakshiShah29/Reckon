@@ -34,6 +34,8 @@ library ReckonEvents {
     event BondUnlocked(bytes32 indexed node, uint256 amount);
     event BondSlashed(bytes32 indexed node, uint256 amount, address to);
     event BondWithdrawn(bytes32 indexed node, address indexed to, uint256 amount);
+    event FillLocked(bytes32 indexed node, uint256 newOpenFillCount);
+    event FillUnlocked(bytes32 indexed node, uint256 newOpenFillCount);
 
     // Challenger
     event ChallengeSubmitted(

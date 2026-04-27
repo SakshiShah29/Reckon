@@ -31,6 +31,14 @@ contract SolverBondVault is Ownable {
     ///         lock/unlock/slash bonds). Set once via `setChallenger`.
     address public challenger;
 
+    /// @notice Address of the FillRegistry (the only caller permitted to bump
+    ///         `openFillCount`). Set once via `setFillRegistry`.
+    address public fillRegistry;
+
+    /// @notice Per-node count of fills currently inside their challenge window.
+    ///         While > 0, the solver cannot withdraw any bond.
+    mapping(bytes32 node => uint256) public openFillCount;
+
     constructor(address initialOwner, IERC20 _usdc, IReckonRegistrar _registrar) Ownable(initialOwner) {
         if (address(_usdc) == address(0) || address(_registrar) == address(0)) {
             revert ReckonErrors.ZeroAddress();
@@ -44,6 +52,13 @@ contract SolverBondVault is Ownable {
         if (_challenger == address(0)) revert ReckonErrors.ZeroAddress();
         if (challenger != address(0)) revert ReckonErrors.AlreadyInitialized();
         challenger = _challenger;
+    }
+
+    /// @notice One-shot setter for the FillRegistry contract address. Owner only.
+    function setFillRegistry(address _fillRegistry) external onlyOwner {
+        if (_fillRegistry == address(0)) revert ReckonErrors.ZeroAddress();
+        if (fillRegistry != address(0)) revert ReckonErrors.AlreadyInitialized();
+        fillRegistry = _fillRegistry;
     }
 
     /// @notice Deposit USDC bond on behalf of the caller's registered subname.
@@ -121,10 +136,35 @@ contract SolverBondVault is Ownable {
         return bondedAmount[node] - lockedAmount[node];
     }
 
+    /// @notice Increment the per-node open-fill counter. Called by FillRegistry
+    ///         when a fill is recorded; blocks the solver from withdrawing bond
+    ///         while any of their fills is inside its challenge window.
+    function lockOnFill(bytes32 node) external {
+        if (msg.sender != fillRegistry) revert ReckonErrors.NotFillRegistry();
+        uint256 next = openFillCount[node] + 1;
+        openFillCount[node] = next;
+        emit ReckonEvents.FillLocked(node, next);
+    }
+
+    /// @notice Decrement the per-node open-fill counter. Called by FillRegistry
+    ///         once a fill ages past its challenge deadline (or is finalized via
+    ///         a successful slash).
+    function unlockOnFill(bytes32 node) external {
+        if (msg.sender != fillRegistry) revert ReckonErrors.NotFillRegistry();
+        uint256 current = openFillCount[node];
+        if (current == 0) revert ReckonErrors.CounterUnderflow();
+        unchecked {
+            openFillCount[node] = current - 1;
+        }
+        emit ReckonEvents.FillUnlocked(node, current - 1);
+    }
+
     /// @notice Withdraw unlocked bond back to the caller. Reverts if any portion
-    ///         being withdrawn is currently locked against open challenge windows.
+    ///         being withdrawn is currently amount-locked against a live challenge,
+    ///         or if any of the solver's fills is still inside its challenge window.
     function withdraw(uint256 amount) external {
         bytes32 node = registrar.namehashOf(msg.sender);
+        if (openFillCount[node] != 0) revert ReckonErrors.OpenFillsPending();
         uint256 free = withdrawable(node);
         if (amount > free) revert ReckonErrors.AmountLocked();
 

@@ -27,8 +27,11 @@ library ReckonErrors {
 
     // SolverBondVault
     error NotChallenger();
+    error NotFillRegistry();
     error InsufficientBond();
     error AmountLocked();
+    error OpenFillsPending();
+    error CounterUnderflow();
 
     // EBBOOracle
     error InsufficientPools();

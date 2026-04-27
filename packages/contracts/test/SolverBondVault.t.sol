@@ -18,6 +18,7 @@ contract SolverBondVaultTest is Test {
 
     address internal admin = makeAddr("admin");
     address internal challenger = makeAddr("challenger");
+    address internal fillRegistry = makeAddr("fillRegistry");
     address internal stranger = makeAddr("stranger");
     address internal solver = makeAddr("solver");
     bytes32 internal solverNode = keccak256("solver.solvers.reckon.eth");
@@ -316,5 +317,131 @@ contract SolverBondVaultTest is Test {
         vm.prank(stranger);
         vm.expectRevert(ReckonErrors.NotRegistered.selector);
         vault.withdraw(1);
+    }
+
+    // -- setFillRegistry / lockOnFill / unlockOnFill --
+
+    function _wireFillRegistry() internal {
+        vm.prank(admin);
+        vault.setFillRegistry(fillRegistry);
+    }
+
+    function test_setFillRegistry_writes_once() public {
+        _wireFillRegistry();
+        assertEq(vault.fillRegistry(), fillRegistry);
+    }
+
+    function test_setFillRegistry_only_owner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vault.setFillRegistry(fillRegistry);
+    }
+
+    function test_setFillRegistry_reverts_on_zero() public {
+        vm.prank(admin);
+        vm.expectRevert(ReckonErrors.ZeroAddress.selector);
+        vault.setFillRegistry(address(0));
+    }
+
+    function test_setFillRegistry_reverts_on_second_call() public {
+        vm.startPrank(admin);
+        vault.setFillRegistry(fillRegistry);
+        vm.expectRevert(ReckonErrors.AlreadyInitialized.selector);
+        vault.setFillRegistry(makeAddr("other"));
+        vm.stopPrank();
+    }
+
+    function test_lockOnFill_only_fillRegistry() public {
+        _wireFillRegistry();
+        vm.prank(stranger);
+        vm.expectRevert(ReckonErrors.NotFillRegistry.selector);
+        vault.lockOnFill(solverNode);
+    }
+
+    function test_lockOnFill_increments_counter() public {
+        _wireFillRegistry();
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit ReckonEvents.FillLocked(solverNode, 1);
+        vm.prank(fillRegistry);
+        vault.lockOnFill(solverNode);
+        assertEq(vault.openFillCount(solverNode), 1);
+
+        vm.prank(fillRegistry);
+        vault.lockOnFill(solverNode);
+        assertEq(vault.openFillCount(solverNode), 2);
+    }
+
+    function test_unlockOnFill_only_fillRegistry() public {
+        _wireFillRegistry();
+        vm.prank(stranger);
+        vm.expectRevert(ReckonErrors.NotFillRegistry.selector);
+        vault.unlockOnFill(solverNode);
+    }
+
+    function test_unlockOnFill_decrements() public {
+        _wireFillRegistry();
+        vm.startPrank(fillRegistry);
+        vault.lockOnFill(solverNode);
+        vault.lockOnFill(solverNode);
+
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit ReckonEvents.FillUnlocked(solverNode, 1);
+        vault.unlockOnFill(solverNode);
+        vm.stopPrank();
+
+        assertEq(vault.openFillCount(solverNode), 1);
+    }
+
+    function test_unlockOnFill_reverts_on_underflow() public {
+        _wireFillRegistry();
+        vm.prank(fillRegistry);
+        vm.expectRevert(ReckonErrors.CounterUnderflow.selector);
+        vault.unlockOnFill(solverNode);
+    }
+
+    function test_withdraw_reverts_when_openFills_present() public {
+        _depositAndWireChallenger();
+        _wireFillRegistry();
+        vm.prank(fillRegistry);
+        vault.lockOnFill(solverNode);
+
+        vm.prank(solver);
+        vm.expectRevert(ReckonErrors.OpenFillsPending.selector);
+        vault.withdraw(100e6);
+    }
+
+    function test_withdraw_succeeds_after_all_fills_unlocked() public {
+        _depositAndWireChallenger();
+        _wireFillRegistry();
+
+        vm.startPrank(fillRegistry);
+        vault.lockOnFill(solverNode);
+        vault.lockOnFill(solverNode);
+        vault.unlockOnFill(solverNode);
+        vault.unlockOnFill(solverNode);
+        vm.stopPrank();
+
+        assertEq(vault.openFillCount(solverNode), 0);
+        vm.prank(solver);
+        vault.withdraw(500e6);
+        assertEq(usdc.balanceOf(solver), 500e6);
+    }
+
+    function test_openFillCount_independent_of_amount_lock() public {
+        // openFillCount and lockedAmount are independent — counter can be 0 while
+        // a live challenge holds an amount lock, and vice versa.
+        _depositAndWireChallenger();
+        _wireFillRegistry();
+
+        vm.prank(challenger);
+        vault.lock(solverNode, 200e6);
+        assertEq(vault.lockedAmount(solverNode), 200e6);
+        assertEq(vault.openFillCount(solverNode), 0);
+
+        vm.prank(fillRegistry);
+        vault.lockOnFill(solverNode);
+        assertEq(vault.lockedAmount(solverNode), 200e6);
+        assertEq(vault.openFillCount(solverNode), 1);
     }
 }
