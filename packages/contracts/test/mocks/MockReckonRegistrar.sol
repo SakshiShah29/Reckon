@@ -53,10 +53,4 @@ contract MockReckonRegistrar is IReckonRegistrar {
     function getText(bytes32 node, string calldata key) external view returns (string memory) {
         return _texts[node][key];
     }
-
-    function isSameOwner(bytes32 nodeA, bytes32 nodeB) external view returns (bool) {
-        address a = _ownerOfNode[nodeA];
-        if (a == address(0)) return false;
-        return a == _ownerOfNode[nodeB];
-    }
 }

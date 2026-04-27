@@ -1,29 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IReckonNamehashLookup} from "./IReckonNamehashLookup.sol";
+
 /// @title IReckonRegistrar
-/// @notice The Reckon-controlled registrar surface used by the validator, vault,
-///         challenger, and reputation writer. Insulates downstream contracts from
-///         ENS internals so we can swap implementations (in-house ↔ Durin/Namestone)
-///         behind a stable interface.
-interface IReckonRegistrar {
-    /// @notice Returns the namehash of the subname owned by `owner`.
-    /// @dev Reverts if `owner` has no subname registered. One subname per address.
-    function namehashOf(address owner) external view returns (bytes32);
-
-    /// @notice Returns the address that registered the subname identified by `node`.
-    function ownerOfNamehash(bytes32 node) external view returns (address);
-
-    /// @notice Returns true iff `owner` has registered a subname.
-    function isRegistered(address owner) external view returns (bool);
-
-    /// @notice Writes a text record. Callable by the node owner OR the trusted
-    ///         reputation writer set at construction.
+/// @notice Lookup + text-record surface used by SolverBondVault and the off-chain
+///         reputation flush pipeline. Implemented by `SolverRegistry`. Extends
+///         `IReckonNamehashLookup` so callers that only need the lookup half
+///         (e.g. `ReckonValidator`) can take the smaller type.
+/// @dev v0.9 dropped `isSameOwner` — self-challenge is now a pure namehash
+///      inequality check (challengerNode != fillerNamehash), made trivial by
+///      disjoint solver/challenger parent nodes.
+interface IReckonRegistrar is IReckonNamehashLookup {
+    /// @notice Writes a text record. Implementation gates on the registrar's
+    ///         own auth model (relayer-only in production, open in the mock).
     function setText(bytes32 node, string calldata key, string calldata value) external;
 
     /// @notice Reads a text record. Returns empty string if unset.
     function getText(bytes32 node, string calldata key) external view returns (string memory);
-
-    /// @notice True iff the two nodes resolve to the same owner address.
-    function isSameOwner(bytes32 nodeA, bytes32 nodeB) external view returns (bool);
 }

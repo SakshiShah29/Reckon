@@ -64,19 +64,4 @@ contract MockReckonRegistrarTest is Test {
     function test_getText_returns_empty_when_unset() public view {
         assertEq(reg.getText(aliceNode, "reckon.reputation"), "");
     }
-
-    function test_isSameOwner_true_for_same_node() public {
-        reg.mint(alice, aliceNode, MockReckonRegistrar.Role.Solver);
-        assertTrue(reg.isSameOwner(aliceNode, aliceNode));
-    }
-
-    function test_isSameOwner_false_for_different_owners() public {
-        reg.mint(alice, aliceNode, MockReckonRegistrar.Role.Solver);
-        reg.mint(bob, bobNode, MockReckonRegistrar.Role.Challenger);
-        assertFalse(reg.isSameOwner(aliceNode, bobNode));
-    }
-
-    function test_isSameOwner_false_for_unregistered_nodes() public view {
-        assertFalse(reg.isSameOwner(aliceNode, bobNode));
-    }
 }
