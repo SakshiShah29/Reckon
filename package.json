@@ -1,0 +1,20 @@
+{
+  "name": "reckon-protocol",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "agent",
+    "inft-tools",
+    "dashboard",
+    "axl-broadcast",
+    "ccip-gateway",
+    "keeper-skills"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "clean": "rm -rf node_modules packages/*/node_modules agent/node_modules inft-tools/node_modules dashboard/node_modules"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
