@@ -57,8 +57,10 @@ export async function startFillListener(
   console.log(`[fill-listener] RPC: ${rpcUrl}`);
 
   let isRunning = true;
-  let lastProcessedBlock = await client.getBlockNumber();
-  console.log(`[fill-listener] Starting from block ${lastProcessedBlock}`);
+  const currentBlock = await client.getBlockNumber();
+  // Start 1000 blocks behind to catch recent fills on startup (~17 min on Base)
+  let lastProcessedBlock = currentBlock - 1000n;
+  console.log(`[fill-listener] Starting from block ${lastProcessedBlock} (current: ${currentBlock})`);
 
   const poll = async () => {
     while (isRunning) {
@@ -69,12 +71,20 @@ export async function startFillListener(
           continue;
         }
 
+        // Query in chunks of 500 blocks to stay within RPC limits
+        const from = lastProcessedBlock + 1n;
+        const to = currentBlock - from > 500n ? from + 500n : currentBlock;
+
         const logs = await client.getLogs({
           address: reactorAddress,
           event: PriorityOrderReactorABI[0], // Fill event
-          fromBlock: lastProcessedBlock + 1n,
-          toBlock: currentBlock,
+          fromBlock: from,
+          toBlock: to,
         });
+
+        if (logs.length > 0) {
+          console.log(`[fill-listener] Found ${logs.length} Fill event(s) in blocks ${from}..${to}`);
+        }
 
         for (const log of logs) {
           const rawFill: RawFillEvent = {
@@ -96,7 +106,7 @@ export async function startFillListener(
           }
         }
 
-        lastProcessedBlock = currentBlock;
+        lastProcessedBlock = to;
       } catch (err) {
         console.error("[fill-listener] Poll error:", err);
       }

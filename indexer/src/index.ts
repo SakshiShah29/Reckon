@@ -24,27 +24,28 @@ async function main() {
   console.log();
 
   const baseRpcUrl = required("BASE_RPC_URL");
+  const recorderRpcUrl = optional("RECORDER_RPC_URL") ?? baseRpcUrl; // separate RPC for writing (e.g. Anvil)
   const relayerPrivateKey = required("RELAYER_PRIVATE_KEY") as `0x${string}`;
   const defaultToleranceBps = parseInt(optional("DEFAULT_TOLERANCE_BPS") ?? "50", 10);
 
   // On-chain recording is optional — omit FILL_REGISTRY_ADDRESS to run in listen-only mode
   const fillRegistryAddress = optional("FILL_REGISTRY_ADDRESS") as Address | undefined;
-  const subnameRegistrarAddress = optional("SUBNAME_REGISTRAR_ADDRESS") as Address | undefined;
+  const solverRegistryAddress = optional("SOLVER_REGISTRY_ADDRESS") as Address | undefined;
 
   // ── Initialize fill recorder ─────────────────────────────────
   initRecorder({
-    rpcUrl: baseRpcUrl,
+    rpcUrl: recorderRpcUrl,
     relayerPrivateKey,
     fillRegistryAddress: fillRegistryAddress ?? "0x0000000000000000000000000000000000000000",
-    subnameRegistrarAddress: subnameRegistrarAddress ?? "0x0000000000000000000000000000000000000000",
+    solverRegistryAddress: solverRegistryAddress ?? "0x0000000000000000000000000000000000000000",
     defaultToleranceBps,
   });
 
   if (!fillRegistryAddress) {
     console.log("[indexer] Listen-only mode — FILL_REGISTRY_ADDRESS not set, on-chain recording will skip");
   }
-  if (!subnameRegistrarAddress) {
-    console.log("[indexer] No SubnameRegistrar — ENS namehash will use filler address hash fallback");
+  if (!solverRegistryAddress) {
+    console.log("[indexer] No SolverRegistry — namehash lookup will use filler address hash fallback");
   }
 
   // ── Initialize storage batcher (optional) ─────────────────────
