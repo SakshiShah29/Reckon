@@ -16,7 +16,7 @@ export function createTestRouter(config: TestRouteConfig): Router {
       const parts = name.split(".");
       if (parts.length < 3 || !["solvers", "challengers"].includes(parts[1])) {
         res.status(400).json({
-          error: "expected format: label.solvers.reckon.eth or label.challengers.reckon.eth",
+          error: "expected format: label.solvers.reckonprotocol.eth or label.challengers.reckonprotocol.eth",
         });
         return;
       }

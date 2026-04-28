@@ -120,7 +120,7 @@ describe("E2E signature cross-validation", () => {
       },
     ] as const;
 
-    const node = namehash("bunni.solvers.reckon.eth");
+    const node = namehash("bunni.solvers.reckonprotocol.eth");
     const callData = encodeFunctionData({
       abi: textAbi,
       functionName: "text",

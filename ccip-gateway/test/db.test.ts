@@ -3,8 +3,8 @@ import { createMockDb, type SubnameRecord } from "../src/db.js";
 import type { Hex } from "viem";
 import { namehash } from "viem/ens";
 
-const ALICE_NODE = namehash("alice.solvers.reckon.eth") as Hex;
-const UNKNOWN_NODE = namehash("nobody.solvers.reckon.eth") as Hex;
+const ALICE_NODE = namehash("alice.solvers.reckonprotocol.eth") as Hex;
+const UNKNOWN_NODE = namehash("nobody.solvers.reckonprotocol.eth") as Hex;
 
 const aliceRecord: SubnameRecord = {
   label: "alice",

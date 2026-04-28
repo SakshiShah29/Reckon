@@ -63,9 +63,9 @@ export const FILL_BATCH_SIZE = 50;
 export const FILL_BATCH_INTERVAL_MS = 60_000; // 60 seconds
 
 // ── ENS ─────────────────────────────────────────────────────────
-export const ENS_PARENT_NAME = "reckon.eth";
-export const SOLVERS_PARENT = "solvers.reckon.eth";
-export const CHALLENGERS_PARENT = "challengers.reckon.eth";
+export const ENS_PARENT_NAME = "reckonprotocol.eth";
+export const SOLVERS_PARENT = "solvers.reckonprotocol.eth";
+export const CHALLENGERS_PARENT = "challengers.reckonprotocol.eth";
 
 // ── Reputation ──────────────────────────────────────────────────
 export const REP_TEXT_KEY = "reckon.reputation";

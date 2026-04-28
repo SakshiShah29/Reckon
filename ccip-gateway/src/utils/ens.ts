@@ -43,5 +43,5 @@ export function computeNamehash(
   label: string,
   namespace: "solvers" | "challengers"
 ): Hex {
-  return namehash(normalize(`${label}.${namespace}.reckon.eth`));
+  return namehash(normalize(`${label}.${namespace}.reckonprotocol.eth`));
 }

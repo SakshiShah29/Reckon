@@ -22,8 +22,8 @@ const SIGNER_ADDR = privateKeyToAccount(SIGNER_KEY).address;
 const RESOLVER_ADDR = "0x1234567890abcdef1234567890abcdef12345678" as Address;
 const CHAIN_ID = 31337;
 
-const ALICE_NODE = namehash("alice.solvers.reckon.eth") as Hex;
-const UNKNOWN_NODE = namehash("nobody.solvers.reckon.eth") as Hex;
+const ALICE_NODE = namehash("alice.solvers.reckonprotocol.eth") as Hex;
+const UNKNOWN_NODE = namehash("nobody.solvers.reckonprotocol.eth") as Hex;
 
 const textAbi = [
   {

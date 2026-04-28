@@ -61,7 +61,7 @@ describe("health endpoint", () => {
 });
 
 describe("/test/:name debug route", () => {
-  const ALICE_NODE = namehash("alice.solvers.reckon.eth") as Hex;
+  const ALICE_NODE = namehash("alice.solvers.reckonprotocol.eth") as Hex;
   const records = new Map<Hex, SubnameRecord>();
   records.set(ALICE_NODE, {
     label: "alice",
@@ -80,7 +80,7 @@ describe("/test/:name debug route", () => {
 
   it("returns record for known subname", async () => {
     const app = buildApp();
-    const res = await requestJson(app, "/test/alice.solvers.reckon.eth");
+    const res = await requestJson(app, "/test/alice.solvers.reckonprotocol.eth");
     expect(res.status).toBe(200);
     expect(res.body.found).toBe(true);
     expect(res.body.owner).toBe("0x00000000000000000000000000000000000A11CE");
@@ -89,7 +89,7 @@ describe("/test/:name debug route", () => {
 
   it("returns found: false for unknown subname", async () => {
     const app = buildApp();
-    const res = await requestJson(app, "/test/nobody.solvers.reckon.eth");
+    const res = await requestJson(app, "/test/nobody.solvers.reckonprotocol.eth");
     expect(res.status).toBe(200);
     expect(res.body.found).toBe(false);
     expect(res.body.namehash).toBeDefined();

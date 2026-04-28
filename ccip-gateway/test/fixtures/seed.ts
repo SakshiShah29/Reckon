@@ -6,9 +6,9 @@ export const ALICE_ADDR = "0x00000000000000000000000000000000000A11CE" as const;
 export const BOB_ADDR = "0x0000000000000000000000000000000000000B0B" as const;
 export const EVE_ADDR = "0x0000000000000000000000000000000000000E4E" as const;
 
-export const ALICE_NODE = namehash("alice.solvers.reckon.eth") as Hex;
-export const BOB_NODE = namehash("bob.solvers.reckon.eth") as Hex;
-export const EVE_NODE = namehash("eve.challengers.reckon.eth") as Hex;
+export const ALICE_NODE = namehash("alice.solvers.reckonprotocol.eth") as Hex;
+export const BOB_NODE = namehash("bob.solvers.reckonprotocol.eth") as Hex;
+export const EVE_NODE = namehash("eve.challengers.reckonprotocol.eth") as Hex;
 
 export const seedRecords: Array<{ node: Hex; record: SubnameRecord }> = [
   {

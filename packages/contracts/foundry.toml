@@ -15,9 +15,13 @@ runs = 1024
 
 [rpc_endpoints]
 base = "https://mainnet.base.org"
+ethereum = "https://ethereum-rpc.publicnode.com"
+sepolia = "${SEPOLIA_RPC}"
 zg_galileo = "https://evmrpc-testnet.0g.ai"
 
 [etherscan]
 base = { key = "${BASESCAN_API_KEY}", chain = 8453 }
+ethereum = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
+sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

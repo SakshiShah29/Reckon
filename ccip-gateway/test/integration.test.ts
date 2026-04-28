@@ -31,7 +31,7 @@ const SIGNER_ADDR = privateKeyToAccount(SIGNER_KEY).address;
 const RESOLVER_ADDR = "0x5FbDB2315678afecb367f032d93F642f64180aa3" as Address;
 const CHAIN_ID = 31337;
 
-const NONEXISTENT_NODE = namehash("nobody.solvers.reckon.eth") as Hex;
+const NONEXISTENT_NODE = namehash("nobody.solvers.reckonprotocol.eth") as Hex;
 
 const textAbi = [
   {

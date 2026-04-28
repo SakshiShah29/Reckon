@@ -39,7 +39,7 @@ const addrCoinAbi = [
 ] as const;
 
 describe("decodeCcipRequest", () => {
-  const node = namehash("bunni.solvers.reckon.eth");
+  const node = namehash("bunni.solvers.reckonprotocol.eth");
 
   it("decodes text(node, key)", () => {
     const callData = encodeFunctionData({
@@ -92,12 +92,12 @@ describe("decodeCcipRequest", () => {
 describe("computeNamehash", () => {
   it("computes namehash for solver subname", () => {
     const hash = computeNamehash("bunni", "solvers");
-    expect(hash).toBe(namehash("bunni.solvers.reckon.eth"));
+    expect(hash).toBe(namehash("bunni.solvers.reckonprotocol.eth"));
   });
 
   it("computes namehash for challenger subname", () => {
     const hash = computeNamehash("eve", "challengers");
-    expect(hash).toBe(namehash("eve.challengers.reckon.eth"));
+    expect(hash).toBe(namehash("eve.challengers.reckonprotocol.eth"));
   });
 
   it("normalizes case", () => {
