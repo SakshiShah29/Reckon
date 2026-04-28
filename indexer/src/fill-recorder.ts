@@ -26,22 +26,23 @@ const base = defineChain({
 
 /**
  * ABI for writing to FillRegistry.
- * recordFill is a permissioned function — only the relayer EOA can call it.
+ * recordFill is a permissioned function — only the recorder EOA can call it.
+ * The contract resolves fillerNamehash internally via solverRegistry.namehashOf(filler).
+ * challengeDeadline is computed internally as fillBlock + challengeWindowBlocks.
  */
 const FillRegistryWriteABI = [
   {
     inputs: [
       { name: "orderHash", type: "bytes32" },
       { name: "filler", type: "address" },
-      { name: "fillerNamehash", type: "bytes32" },
       { name: "swapper", type: "address" },
       { name: "tokenIn", type: "address" },
       { name: "tokenOut", type: "address" },
-      { name: "inputAmount", type: "uint256" },
-      { name: "outputAmount", type: "uint256" },
-      { name: "eboToleranceBps", type: "uint16" },
-      { name: "fillBlock", type: "uint256" },
-      { name: "challengeDeadline", type: "uint256" },
+      { name: "inputAmount", type: "uint128" },
+      { name: "outputAmount", type: "uint128" },
+      { name: "eboTolerance", type: "uint16" },
+      { name: "outputsLength", type: "uint8" },
+      { name: "fillBlock", type: "uint64" },
     ],
     name: "recordFill",
     outputs: [],
@@ -51,13 +52,13 @@ const FillRegistryWriteABI = [
 ] as const;
 
 /**
- * ABI for reading the ENS L2 subname registrar to look up solver namehash.
- * subnameByAddress maps solver EOA → ENS namehash.
+ * ABI for reading the SolverRegistry to look up solver namehash.
+ * namehashOf maps solver EOA → ENS namehash (returns bytes32(0) if unregistered).
  */
-const SubnameRegistrarABI = [
+const SolverRegistryABI = [
   {
     inputs: [{ name: "addr", type: "address" }],
-    name: "subnameByAddress",
+    name: "namehashOf",
     outputs: [{ name: "", type: "bytes32" }],
     stateMutability: "view",
     type: "function",
@@ -69,7 +70,7 @@ export interface RecorderConfig {
   rpcUrl: string;
   relayerPrivateKey: `0x${string}`;
   fillRegistryAddress: Address;
-  subnameRegistrarAddress: Address;
+  solverRegistryAddress: Address;
   /** Default EBBO tolerance in bps if we can't read from validator */
   defaultToleranceBps: number;
 }
@@ -78,7 +79,7 @@ interface RecorderClients {
   publicClient: PublicClient;
   walletClient: ReturnType<typeof createWalletClient<Transport, Chain, PrivateKeyAccount>>;
   fillRegistryAddress: Address;
-  subnameRegistrarAddress: Address;
+  solverRegistryAddress: Address;
   defaultToleranceBps: number;
 }
 
@@ -102,7 +103,7 @@ export function initRecorder(config: RecorderConfig): void {
     publicClient,
     walletClient,
     fillRegistryAddress: config.fillRegistryAddress,
-    subnameRegistrarAddress: config.subnameRegistrarAddress,
+    solverRegistryAddress: config.solverRegistryAddress,
     defaultToleranceBps: config.defaultToleranceBps,
   };
 
@@ -125,26 +126,27 @@ export async function recordFill(
   if (!clients) throw new Error("Recorder not initialized — call initRecorder first");
 
   const tag = rawFill.orderHash.slice(0, 10);
-  const { publicClient, walletClient, fillRegistryAddress, subnameRegistrarAddress } = clients;
+  const { publicClient, walletClient, fillRegistryAddress, solverRegistryAddress } = clients;
 
-  // 1. Look up solver's ENS namehash
+  // 1. Check if filler is a registered solver via SolverRegistry.namehashOf()
+  //    The on-chain FillRegistry also does this check, but we pre-check here to
+  //    avoid wasting gas on unregistered fillers.
   let fillerNamehash: `0x${string}`;
   try {
     fillerNamehash = await publicClient.readContract({
-      address: subnameRegistrarAddress,
-      abi: SubnameRegistrarABI,
-      functionName: "subnameByAddress",
+      address: solverRegistryAddress,
+      abi: SolverRegistryABI,
+      functionName: "namehashOf",
       args: [rawFill.filler],
     });
 
     // Zero namehash means solver isn't registered
     if (fillerNamehash === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} has no ENS subname, skipping`);
+      console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} not registered, skipping`);
       return null;
     }
-  } catch (err) {
-    console.warn(`[fill-recorder] ${tag} failed to resolve namehash, using filler address hash:`, err);
-    // Fallback: hash the filler address (for dev/testing without ENS)
+  } catch {
+    // Filler not registered in SolverRegistry — use address hash as fallback
     const { keccak256, encodePacked } = await import("viem");
     fillerNamehash = keccak256(encodePacked(["address"], [rawFill.filler]));
   }
@@ -200,10 +202,19 @@ export async function recordFill(
   // For now, use the default tolerance
 
   const fillBlock = Number(rawFill.blockNumber);
-  const challengeDeadline = fillBlock + CHALLENGE_WINDOW_BLOCKS;
+  const challengeDeadline = fillBlock + CHALLENGE_WINDOW_BLOCKS; // mirror contract's computation for local record
   const block = await publicClient.getBlock({ blockNumber: rawFill.blockNumber });
 
-  // 4. Call FillRegistry.recordFill() on-chain
+  // 4. Count outputs (we only support single-output orders)
+  //    Count how many distinct transfers go TO the swapper
+  const outputTransfers = transferLogs.filter((log) => {
+    if (log.topics.length < 3) return false;
+    const to = ("0x" + log.topics[2]!.slice(26)).toLowerCase();
+    return to === rawFill.swapper.toLowerCase();
+  });
+  const outputsLength = outputTransfers.length;
+
+  // 5. Call FillRegistry.recordFill() on-chain
   let recordTxHash: `0x${string}`;
   try {
     recordTxHash = await walletClient.writeContract({
@@ -214,23 +225,21 @@ export async function recordFill(
       args: [
         rawFill.orderHash,
         rawFill.filler,
-        fillerNamehash,
         rawFill.swapper,
         tokenIn,
         tokenOut,
-        inputAmount,
-        outputAmount,
-        toleranceBps,
-        BigInt(fillBlock),
-        BigInt(challengeDeadline),
+        inputAmount,        // uint128 — viem handles BigInt truncation
+        outputAmount,       // uint128
+        toleranceBps,       // uint16
+        outputsLength,      // uint8
+        BigInt(fillBlock),  // uint64
       ],
     });
     console.log(`[fill-recorder] ${tag} recorded on-chain tx: ${recordTxHash.slice(0, 10)}...`);
-  } catch (err) {
-    console.error(`[fill-recorder] ${tag} on-chain recordFill failed:`, err);
-    // Continue to write MongoDB even if on-chain write fails
-    // (the on-chain record can be retried; MongoDB is the primary read store)
-    recordTxHash = rawFill.transactionHash; // fallback to the original fill tx
+  } catch (err: any) {
+    const reason = err?.shortMessage ?? err?.message ?? "unknown";
+    console.warn(`[fill-recorder] ${tag} on-chain recordFill skipped: ${reason}`);
+    recordTxHash = rawFill.transactionHash;
   }
 
   // 5. Build the enriched FillRecord
