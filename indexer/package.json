@@ -1,0 +1,25 @@
+{
+  "name": "@reckon-protocol/indexer",
+  "version": "0.1.0",
+  "description": "Off-chain indexer/relayer: subscribes to UniswapX Fill events, records fills on-chain and in MongoDB, attests iNFT ownership cross-chain, batches audit trail to 0G Storage",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node --import tsx src/index.ts",
+    "dev": "node --import tsx --watch src/index.ts"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-ts-sdk": "^1.2.6",
+    "@reckon-protocol/types": "*",
+    "dotenv": "^16.4.0",
+    "ethers": "^6.13.0",
+    "mongodb": "^6.9.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
