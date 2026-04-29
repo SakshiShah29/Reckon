@@ -129,10 +129,8 @@ export async function recordFill(
   const { publicClient, walletClient, fillRegistryAddress, solverRegistryAddress } = clients;
 
   // 1. Check if filler is a registered Reckon solver via SolverRegistry.namehashOf()
-  //    If not registered, we still write to MongoDB (for analytics) but skip the
-  //    on-chain recordFill call since FillRegistry will revert with NotRegistered().
+  //    Skip entirely if the filler is not registered — we only track Reckon-protected fills.
   let fillerNamehash: `0x${string}`;
-  let isRegistered = false;
   try {
     fillerNamehash = await publicClient.readContract({
       address: solverRegistryAddress,
@@ -141,17 +139,13 @@ export async function recordFill(
       args: [rawFill.filler],
     });
 
-    // Zero namehash means solver isn't registered
     if (fillerNamehash === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      const { keccak256, encodePacked } = await import("viem");
-      fillerNamehash = keccak256(encodePacked(["address"], [rawFill.filler]));
-    } else {
-      isRegistered = true;
+      console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} not registered — skipping`);
+      return null;
     }
   } catch {
-    // namehashOf reverts for unregistered addresses — use address hash as fallback
-    const { keccak256, encodePacked } = await import("viem");
-    fillerNamehash = keccak256(encodePacked(["address"], [rawFill.filler]));
+    console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} not registered — skipping`);
+    return null;
   }
 
   // 2. Read transaction receipt to extract order details
@@ -239,38 +233,32 @@ export async function recordFill(
   });
   const outputsLength = outputTransfers.length;
 
-  // 5. Call FillRegistry.recordFill() on-chain — only if filler is registered,
-  //    otherwise the contract will revert with NotRegistered() and waste gas.
+  // 5. Call FillRegistry.recordFill() on-chain
   let recordTxHash: `0x${string}`;
-  if (isRegistered) {
-    try {
-      recordTxHash = await walletClient.writeContract({
-        chain: base,
-        address: fillRegistryAddress,
-        abi: FillRegistryWriteABI,
-        functionName: "recordFill",
-        args: [
-          rawFill.orderHash,
-          rawFill.filler,
-          rawFill.swapper,
-          tokenIn,
-          tokenOut,
-          inputAmount,        // uint128
-          outputAmount,       // uint128
-          toleranceBps,       // uint16
-          outputsLength,      // uint8
-          BigInt(fillBlock),  // uint64
-        ],
-      });
-      console.log(`[fill-recorder] ${tag} recorded on-chain tx: ${recordTxHash.slice(0, 10)}...`);
-    } catch (err: any) {
-      const reason = err?.shortMessage ?? err?.message ?? "unknown";
-      console.warn(`[fill-recorder] ${tag} on-chain recordFill failed: ${reason}`);
-      recordTxHash = rawFill.transactionHash;
-    }
-  } else {
-    // Unregistered filler — MongoDB-only record for analytics
-    recordTxHash = rawFill.transactionHash;
+  try {
+    recordTxHash = await walletClient.writeContract({
+      chain: base,
+      address: fillRegistryAddress,
+      abi: FillRegistryWriteABI,
+      functionName: "recordFill",
+      args: [
+        rawFill.orderHash,
+        rawFill.filler,
+        rawFill.swapper,
+        tokenIn,
+        tokenOut,
+        inputAmount,        // uint128
+        outputAmount,       // uint128
+        toleranceBps,       // uint16
+        outputsLength,      // uint8
+        BigInt(fillBlock),  // uint64
+      ],
+    });
+    console.log(`[fill-recorder] ${tag} recorded on-chain tx: ${recordTxHash.slice(0, 10)}...`);
+  } catch (err: any) {
+    const reason = err?.shortMessage ?? err?.message ?? "unknown";
+    console.warn(`[fill-recorder] ${tag} on-chain recordFill failed: ${reason}`);
+    return null;
   }
 
   // 5. Build the enriched FillRecord
@@ -296,7 +284,7 @@ export async function recordFill(
     const collection = await getFillsCollection();
     await collection.updateOne(
       { orderHash: fill.orderHash },
-      { $setOnInsert: { ...fill, recordedOnChain: isRegistered } },
+      { $setOnInsert: { ...fill, recordedOnChain: true } },
       { upsert: true },
     );
     console.log(`[fill-recorder] ${tag} written to MongoDB`);

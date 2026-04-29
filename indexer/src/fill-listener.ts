@@ -65,17 +65,19 @@ export async function startFillListener(
   let maxChunkSize = 500n;
   try {
     const testFrom = await client.getBlockNumber();
+    const testRange = testFrom > 500n ? 500n : testFrom;
     await client.getLogs({
       address: reactorAddress,
       event: PriorityOrderReactorABI[0],
-      fromBlock: testFrom - 500n,
+      fromBlock: testFrom - testRange,
       toBlock: testFrom,
     });
   } catch {
-    // If 500-block query fails, fall back to small chunks for free RPCs
+    // If range query fails, fall back to small chunks for free RPCs
     maxChunkSize = 9n;
     console.log(`[fill-listener] RPC limits detected — using ${maxChunkSize}-block chunks`);
   }
+  console.log(`[fill-listener] Using ${maxChunkSize}-block chunks`);
 
   let isRunning = true;
   const currentBlock = await client.getBlockNumber();
