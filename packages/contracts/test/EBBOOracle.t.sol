@@ -19,7 +19,7 @@ contract EBBOOracleTest is Test {
     address constant POOL_C = 0x0b1C2DCbBfA744ebD3fC17fF1A96A1E1Eb4B2d69;
 
     function setUp() public {
-        oracle = new EBBOOracle(admin);
+        oracle = new EBBOOracle(admin, address(0), address(0), new EBBOOracle.PoolRef[](0));
     }
 
     function _threePools() internal pure returns (EBBOOracle.PoolRef[] memory pools) {
@@ -226,38 +226,31 @@ contract EBBOOracleBenchmarkForkTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.rpcUrl("base"));
-        oracle = new EBBOOracle(admin);
+        oracle = new EBBOOracle(admin, Addresses.WETH_BASE, Addresses.USDC_BASE, _canonicalPools());
     }
 
-    function _commitCanonical() internal {
-        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
+    function _canonicalPools() internal pure returns (EBBOOracle.PoolRef[] memory pools) {
+        pools = new EBBOOracle.PoolRef[](3);
         pools[0] = EBBOOracle.PoolRef({pool: POOL_030});
         pools[1] = EBBOOracle.PoolRef({pool: POOL_005});
         pools[2] = EBBOOracle.PoolRef({pool: POOL_100});
-
-        vm.startPrank(admin);
-        oracle.proposePoolList(Addresses.WETH_BASE, Addresses.USDC_BASE, pools);
-        vm.warp(block.timestamp + 48 hours);
-        oracle.commitPoolList(Addresses.WETH_BASE, Addresses.USDC_BASE);
-        vm.stopPrank();
     }
 
     function test_computeBenchmark_in_expected_band_weth_to_usdc() public {
-        _commitCanonical();
         uint256 benchmark = oracle.computeBenchmark(Addresses.WETH_BASE, Addresses.USDC_BASE);
         assertGe(benchmark, 1e9);
         assertLe(benchmark, 4e9);
     }
 
     function test_computeBenchmark_in_expected_band_usdc_to_weth() public {
-        _commitCanonical();
+
         uint256 benchmark = oracle.computeBenchmark(Addresses.USDC_BASE, Addresses.WETH_BASE);
         assertGe(benchmark, 25e25);
         assertLe(benchmark, 1e27);
     }
 
     function test_computeBenchmark_directions_are_reciprocal() public {
-        _commitCanonical();
+
         uint256 fwd = oracle.computeBenchmark(Addresses.WETH_BASE, Addresses.USDC_BASE);
         uint256 rev = oracle.computeBenchmark(Addresses.USDC_BASE, Addresses.WETH_BASE);
         uint256 product = (fwd * rev) / 1e18;
@@ -266,7 +259,7 @@ contract EBBOOracleBenchmarkForkTest is Test {
     }
 
     function test_computeBenchmark_within_half_pct_of_deepest_pool() public {
-        _commitCanonical();
+
         uint256 benchmark = oracle.computeBenchmark(Addresses.WETH_BASE, Addresses.USDC_BASE);
 
         EBBOOracleHarness harness = new EBBOOracleHarness(admin);
@@ -278,7 +271,7 @@ contract EBBOOracleBenchmarkForkTest is Test {
 
     function test_computeBenchmark_reverts_on_unregistered_pair() public {
         vm.expectRevert(ReckonErrors.InsufficientPools.selector);
-        oracle.computeBenchmark(Addresses.WETH_BASE, Addresses.USDC_BASE);
+        oracle.computeBenchmark(address(0xdead), address(0xbeef));
     }
 
     function test_computeBenchmark_reverts_on_too_few_pools() public {
@@ -299,7 +292,7 @@ contract EBBOOracleBenchmarkForkTest is Test {
 /// @notice Test-only subclass exposing internal helpers as a reference for the
 ///         "within 0.5% of deepest pool" check.
 contract EBBOOracleHarness is EBBOOracle {
-    constructor(address initialOwner) EBBOOracle(initialOwner) {}
+    constructor(address initialOwner) EBBOOracle(initialOwner, address(0), address(0), new PoolRef[](0)) {}
 
     function exposed_priceFromV3(address pool, address tokenIn, address tokenOut) external view returns (uint256) {
         return _priceFromV3(pool, tokenIn, tokenOut);
@@ -316,18 +309,13 @@ contract EBBOOracleManipulationForkTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.rpcUrl("base"));
-        oracle = new EBBOOracle(admin);
 
         EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
         pools[0] = EBBOOracle.PoolRef({pool: POOL_030});
         pools[1] = EBBOOracle.PoolRef({pool: POOL_005});
         pools[2] = EBBOOracle.PoolRef({pool: POOL_100});
 
-        vm.startPrank(admin);
-        oracle.proposePoolList(Addresses.WETH_BASE, Addresses.USDC_BASE, pools);
-        vm.warp(block.timestamp + 48 hours);
-        oracle.commitPoolList(Addresses.WETH_BASE, Addresses.USDC_BASE);
-        vm.stopPrank();
+        oracle = new EBBOOracle(admin, Addresses.WETH_BASE, Addresses.USDC_BASE, pools);
     }
 
     /// @dev Overwrite the lower 160 bits of slot0 (sqrtPriceX96) on a v3 pool.

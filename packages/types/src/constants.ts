@@ -82,4 +82,5 @@ export const MONGO_COLLECTIONS = {
   reputationUpdates: "reputation_updates",
   ownerAttestations: "owner_attestations",
   fillBatches: "fill_batches",
+  registrations: "registrations",
 } as const;

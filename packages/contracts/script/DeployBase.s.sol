@@ -45,21 +45,19 @@ contract DeployBase is Script {
         address deployer = msg.sender;
         address owner = vm.envOr("OWNER", deployer);
         address relayer = vm.envOr("RELAYER", deployer);
-        address attester = vm.envOr("ATTESTER", relayer);
-        address recorder = vm.envOr("RECORDER", relayer);
         address treasury = vm.envOr("TREASURY", owner);
-
-        if (isAnvil) {
-            vm.createSelectFork(vm.rpcUrl("base"));
-        }
 
         vm.startBroadcast();
 
-        _deploy(owner, relayer, attester, recorder, treasury);
-        _wire(owner);
+        _deploy(owner, relayer, treasury);
+        _wire();
 
         if (isAnvil) {
-            _seed(owner, relayer, recorder, attester);
+            address solverEoa = vm.envAddress("SOLVER");
+            address agentEoa = vm.envAddress("AGENT");
+            uint256 relayerPk = vm.envUint("RELAYER_PK");
+            uint256 solverPk = vm.envUint("SOLVER_PK");
+            _seed(solverEoa, agentEoa, relayerPk, solverPk);
         }
 
         vm.stopBroadcast();
@@ -70,17 +68,19 @@ contract DeployBase is Script {
     function _deploy(
         address owner,
         address relayer,
-        address attester,
-        address recorder,
         address treasury
     ) internal {
-        ownerRegistry = new OwnerRegistry(owner, attester);
+        ownerRegistry = new OwnerRegistry(owner, relayer);
         solverRegistry = new SolverRegistry(owner, relayer);
         challengerRegistry = new ChallengerRegistry(owner, relayer);
-        ebboOracle = new EBBOOracle(owner);
+        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
+        pools[0] = EBBOOracle.PoolRef({pool: POOL_A});
+        pools[1] = EBBOOracle.PoolRef({pool: POOL_B});
+        pools[2] = EBBOOracle.PoolRef({pool: POOL_C});
+        ebboOracle = new EBBOOracle(owner, USDC, Addresses.WETH_BASE, pools);
 
         solverBondVault = new SolverBondVault(owner, IERC20(USDC), IReckonRegistrar(address(solverRegistry)));
-        fillRegistry = new FillRegistry(owner, IReckonRegistrar(address(solverRegistry)), solverBondVault, recorder);
+        fillRegistry = new FillRegistry(owner, IReckonRegistrar(address(solverRegistry)), solverBondVault, relayer);
 
         royaltyDistributor = new RoyaltyDistributor(
             owner, IERC20(USDC), ownerRegistry, fillRegistry, treasury
@@ -102,74 +102,49 @@ contract DeployBase is Script {
         );
     }
 
-    function _wire(address owner) internal {
+    function _wire() internal {
         solverBondVault.setFillRegistry(address(fillRegistry));
         solverBondVault.setRoyaltyDistributor(address(royaltyDistributor));
         solverBondVault.setChallenger(address(challenger));
         fillRegistry.setChallenger(address(challenger));
         royaltyDistributor.setSolverBondVault(address(solverBondVault));
-
-        // Propose EBBO pool list (timelock applies on mainnet)
-        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
-        pools[0] = EBBOOracle.PoolRef({pool: POOL_A});
-        pools[1] = EBBOOracle.PoolRef({pool: POOL_B});
-        pools[2] = EBBOOracle.PoolRef({pool: POOL_C});
-        ebboOracle.proposePoolList(Addresses.USDC_BASE, Addresses.WETH_BASE, pools);
     }
 
-    function _seed(address owner, address relayer, address recorder, address attester) internal {
-        // Fast-forward past EBBO timelock and commit
-        vm.warp(block.timestamp + 48 hours + 1);
-        ebboOracle.commitPoolList(Addresses.USDC_BASE, Addresses.WETH_BASE);
+    function _seed(address solverEoa, address agentEoa, uint256 relayerPk, uint256 solverPk) internal {
+        bytes32 agentNode = keccak256("agent.challengers.reckon.eth");
+        address relayerEoa = vm.addr(relayerPk);
 
-        // Test EOAs
-        address alice = address(0xA11CE);
-        address bob = address(0xB0B);
-        address eve = address(0xE4E);
+        // Fund ETH via real transfers from deployer (cheatcodes don't persist to anvil)
+        (bool s1,) = payable(solverEoa).call{value: 100 ether}("");
+        (bool s2,) = payable(agentEoa).call{value: 100 ether}("");
+        (bool s3,) = payable(relayerEoa).call{value: 100 ether}("");
+        require(s1 && s2 && s3, "ETH transfer failed");
 
-        // Namehashes
-        bytes32 aliceNode = keccak256("alice.solvers.reckon.eth");
-        bytes32 bobNode = keccak256("bob.solvers.reckon.eth");
-        bytes32 eveNode = keccak256("eve.challengers.reckon.eth");
-
-        // Register solvers and challenger
-        solverRegistry.register(aliceNode, alice);
-        solverRegistry.register(bobNode, bob);
-        challengerRegistry.register(eveNode, eve);
-
-        // Seed reputation
-        solverRegistry.setText(aliceNode, "reckon.reputation", "500000000000000000");
-        solverRegistry.setText(bobNode, "reckon.reputation", "800000000000000000");
-
-        // Fund test EOAs with USDC via storage slot manipulation
-        _dealERC20(USDC, alice, 100_000e6);
-        _dealERC20(USDC, bob, 100_000e6);
-        _dealERC20(USDC, eve, 100_000e6);
-
-        // Deposit bonds for solvers
         vm.stopBroadcast();
 
-        vm.startPrank(alice);
-        IERC20(USDC).approve(address(solverBondVault), 50_000e6);
-        solverBondVault.deposit(50_000e6);
-        vm.stopPrank();
+        vm.startBroadcast(relayerPk);
+        challengerRegistry.register(agentNode, agentEoa);
+        ownerRegistry.attestOwner(1, agentEoa);
+        vm.stopBroadcast();
 
-        vm.startPrank(bob);
-        IERC20(USDC).approve(address(solverBondVault), 50_000e6);
-        solverBondVault.deposit(50_000e6);
-        vm.stopPrank();
-
-        // Attest NFT ownership for eve
-        vm.prank(attester);
-        ownerRegistry.attestOwner(1, eve);
+        _logSeedCmds(solverEoa, agentEoa, relayerEoa);
 
         vm.startBroadcast();
     }
 
-    function _dealERC20(address token, address to, uint256 amount) internal {
-        // USDC on Base (FiatTokenV2) stores balances at slot 9
-        bytes32 slot = keccak256(abi.encode(to, uint256(9)));
-        vm.store(token, slot, bytes32(amount));
+    function _logSeedCmds(address solverEoa, address agentEoa, address relayerEoa) internal view {
+        console.log("");
+        console.log("=== Post-Deploy: Run these to seed USDC + bond ===");
+        string memory rpc = "cast rpc anvil_setStorageAt";
+        string memory u = vm.toString(USDC);
+        string memory amt = vm.toString(bytes32(uint256(100_000e6)));
+        string memory rpcUrl = " --rpc-url $RPC_URL";
+        console.log(string.concat(rpc, " ", u, " ", vm.toString(keccak256(abi.encode(solverEoa, uint256(9)))), " ", amt, rpcUrl));
+        console.log(string.concat(rpc, " ", u, " ", vm.toString(keccak256(abi.encode(agentEoa, uint256(9)))), " ", amt, rpcUrl));
+        console.log(string.concat(rpc, " ", u, " ", vm.toString(keccak256(abi.encode(relayerEoa, uint256(9)))), " ", amt, rpcUrl));
+        string memory v = vm.toString(address(solverBondVault));
+        console.log(string.concat("cast send ", u, " \"approve(address,uint256)\" ", v, " 50000000000 --private-key $SOLVER_PK", rpcUrl));
+        console.log(string.concat("cast send ", v, " \"deposit(uint256)\" 50000000000 --private-key $SOLVER_PK", rpcUrl));
     }
 
     function _log() internal view {
