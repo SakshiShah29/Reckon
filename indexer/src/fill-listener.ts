@@ -56,10 +56,28 @@ export async function startFillListener(
   console.log(`[fill-listener] Reactor: ${reactorAddress}`);
   console.log(`[fill-listener] RPC: ${rpcUrl}`);
 
+  // Detect RPC block range limit (free public RPCs like mainnet.base.org cap at 10 blocks)
+  // Alchemy/Infura support 2000+, Anvil has no limit
+  let maxChunkSize = 500n;
+  try {
+    const testFrom = await client.getBlockNumber();
+    await client.getLogs({
+      address: reactorAddress,
+      event: PriorityOrderReactorABI[0],
+      fromBlock: testFrom - 500n,
+      toBlock: testFrom,
+    });
+  } catch {
+    // If 500-block query fails, fall back to small chunks for free RPCs
+    maxChunkSize = 9n;
+    console.log(`[fill-listener] RPC limits detected — using ${maxChunkSize}-block chunks`);
+  }
+
   let isRunning = true;
   const currentBlock = await client.getBlockNumber();
-  // Start 1000 blocks behind to catch recent fills on startup (~17 min on Base)
-  let lastProcessedBlock = currentBlock - 1000n;
+  // Start lookback based on chunk size (small chunks = fewer blocks back to avoid slow catchup)
+  const lookback = maxChunkSize === 9n ? 50n : 1000n;
+  let lastProcessedBlock = currentBlock - lookback;
   console.log(`[fill-listener] Starting from block ${lastProcessedBlock} (current: ${currentBlock})`);
 
   const poll = async () => {
@@ -71,9 +89,9 @@ export async function startFillListener(
           continue;
         }
 
-        // Query in chunks of 500 blocks to stay within RPC limits
+        // Query in chunks sized to the RPC's limit
         const from = lastProcessedBlock + 1n;
-        const to = currentBlock - from > 500n ? from + 500n : currentBlock;
+        const to = currentBlock - from > maxChunkSize ? from + maxChunkSize : currentBlock;
 
         const logs = await client.getLogs({
           address: reactorAddress,

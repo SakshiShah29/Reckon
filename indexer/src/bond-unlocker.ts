@@ -4,10 +4,8 @@ import {
   http,
   defineChain,
   type Address,
-  type PublicClient,
 } from "viem";
-import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
-import { CHALLENGE_WINDOW_BLOCKS } from "@reckon-protocol/types";
+import { privateKeyToAccount } from "viem/accounts";
 import { getFillsCollection } from "./db.js";
 
 const base = defineChain({

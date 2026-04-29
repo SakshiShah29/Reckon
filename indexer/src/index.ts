@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import { createWalletClient, http, defineChain, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { startFillListener } from "./fill-listener.js";
@@ -145,6 +146,17 @@ async function main() {
   } else {
     console.log("[indexer] Challenge listener disabled — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
   }
+
+  // ── Health HTTP server (keeps Render free-tier web service alive) ──
+  const port = parseInt(process.env["PORT"] ?? "10000", 10);
+  const startedAt = Date.now();
+  createServer((_req, res) => {
+    const uptime = Math.floor((Date.now() - startedAt) / 1000);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", uptime, batcherPending: batcher?.pending ?? 0 }));
+  }).listen(port, () => {
+    console.log(`[indexer] Health server listening on :${port}`);
+  });
 
   // ── Health logging ────────────────────────────────────────────
   const healthTimer = setInterval(() => {
