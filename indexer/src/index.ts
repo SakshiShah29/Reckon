@@ -1,10 +1,20 @@
 import "dotenv/config";
+import { createWalletClient, http, defineChain, type Address } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { startFillListener } from "./fill-listener.js";
 import { initRecorder, recordFill } from "./fill-recorder.js";
 import { startOwnerAttester } from "./owner-attester.js";
+import { startBondUnlocker } from "./bond-unlocker.js";
+import { startChallengeListener } from "./challenge-listener.js";
 import { createStorageBatcher, type BatcherConfig } from "./storage-batcher.js";
 import { closeDb } from "./db.js";
-import type { Address } from "viem";
+
+const base = defineChain({
+  id: 8453,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+});
 
 // ── Environment ─────────────────────────────────────────────────
 function required(key: string): string {
@@ -56,7 +66,22 @@ async function main() {
   let batcher: ReturnType<typeof createStorageBatcher> | null = null;
 
   if (zgRpcUrl && zgIndexerUrl && zgPrivateKey) {
-    batcher = createStorageBatcher({ zgRpcUrl, zgIndexerUrl, zgPrivateKey });
+    // Build a wallet client for anchorBatch calls (reuses the same relayer key)
+    const batcherWallet = fillRegistryAddress
+      ? createWalletClient({
+          chain: base,
+          transport: http(recorderRpcUrl),
+          account: privateKeyToAccount(relayerPrivateKey),
+        })
+      : undefined;
+
+    batcher = createStorageBatcher({
+      zgRpcUrl,
+      zgIndexerUrl,
+      zgPrivateKey,
+      walletClient: batcherWallet,
+      fillRegistryAddress,
+    });
     console.log("[indexer] 0G Storage batcher enabled");
   } else {
     console.log("[indexer] 0G Storage batcher disabled — ZG_* env vars not set");
@@ -91,6 +116,36 @@ async function main() {
     console.log("[indexer] Owner attester disabled — CHALLENGER_NFT_ADDRESS or OWNER_REGISTRY_ADDRESS not set");
   }
 
+  // ── Start bond unlocker (needs FillRegistry) ──────────────────
+  let stopBondUnlocker: (() => void) | null = null;
+
+  if (fillRegistryAddress) {
+    stopBondUnlocker = await startBondUnlocker({
+      rpcUrl: recorderRpcUrl,
+      relayerPrivateKey,
+      fillRegistryAddress,
+    });
+  } else {
+    console.log("[indexer] Bond unlocker disabled — no FILL_REGISTRY_ADDRESS");
+  }
+
+  // ── Start challenge listener (needs Challenger + SolverRegistry) ──
+  let stopChallengeListener: (() => void) | null = null;
+
+  const challengerContractAddress = optional("CHALLENGER_ADDRESS") as Address | undefined;
+
+  if (challengerContractAddress && solverRegistryAddress) {
+    stopChallengeListener = await startChallengeListener({
+      rpcUrl: baseRpcUrl,
+      recorderRpcUrl,
+      relayerPrivateKey,
+      challengerAddress: challengerContractAddress,
+      solverRegistryAddress,
+    });
+  } else {
+    console.log("[indexer] Challenge listener disabled — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
+  }
+
   // ── Health logging ────────────────────────────────────────────
   const healthTimer = setInterval(() => {
     console.log(
@@ -104,6 +159,8 @@ async function main() {
     clearInterval(healthTimer);
     stopFillListener();
     if (stopOwnerAttester) stopOwnerAttester();
+    if (stopBondUnlocker) stopBondUnlocker();
+    if (stopChallengeListener) stopChallengeListener();
 
     if (batcher) {
       console.log("[indexer] Flushing remaining batch records...");

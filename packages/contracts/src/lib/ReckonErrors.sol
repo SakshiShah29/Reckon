@@ -26,6 +26,7 @@ library ReckonErrors {
     error MultiOutputUnsupported();
     error FillNotFound();
     error AlreadySlashed();
+    error ChallengeWindowOpen();
 
     // SolverBondVault / FillRegistry / shared
     error NotChallenger();

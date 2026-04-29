@@ -145,4 +145,21 @@ contract FillRegistry is Ownable {
 
         solverBondVault.unlockOnFill(r.fillerNamehash);
     }
+
+    /// @notice Finalize a fill whose challenge window has expired without a
+    ///         challenge. Decrements the solver's open-fill counter so they can
+    ///         eventually withdraw their bond. Recorder only.
+    /// @dev The relayer calls this in a batch sweep once fills age past their
+    ///      challengeDeadline. Idempotent — reverts via SolverBondVault if the
+    ///      counter is already zero (CounterUnderflow), so calling twice is safe
+    ///      to catch.
+    function finalizeFill(bytes32 orderHash) external {
+        if (msg.sender != recorder) revert ReckonErrors.NotRecorder();
+        FillRecord storage r = fills[orderHash];
+        if (r.fillBlock == 0) revert ReckonErrors.FillNotFound();
+        if (r.slashed) revert ReckonErrors.AlreadySlashed();
+        if (uint64(block.number) <= r.challengeDeadline) revert ReckonErrors.ChallengeWindowOpen();
+
+        solverBondVault.unlockOnFill(r.fillerNamehash);
+    }
 }

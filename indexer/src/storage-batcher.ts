@@ -7,6 +7,32 @@ import {
   FILL_BATCH_INTERVAL_MS,
 } from "@reckon-protocol/types";
 import { getBatchesCollection } from "./db.js";
+import { defineChain, type Address, type WalletClient } from "viem";
+
+const base = defineChain({
+  id: 8453,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+});
+
+/**
+ * ABI for FillRegistry.anchorBatch() — emits FillBatchAnchored on Base.
+ * Called by the recorder EOA after uploading a batch to 0G Storage.
+ */
+const AnchorBatchABI = [
+  {
+    inputs: [
+      { name: "rootHash", type: "bytes32" },
+      { name: "firstOrderHash", type: "bytes32" },
+      { name: "lastOrderHash", type: "bytes32" },
+    ],
+    name: "anchorBatch",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+] as const;
 
 export interface BatcherConfig {
   /** 0G Galileo RPC URL */
@@ -15,6 +41,10 @@ export interface BatcherConfig {
   zgIndexerUrl: string;
   /** Private key for 0G Storage upload */
   zgPrivateKey: string;
+  /** Wallet client for on-chain anchorBatch call (optional — omit to skip anchoring) */
+  walletClient?: WalletClient;
+  /** FillRegistry address on Base */
+  fillRegistryAddress?: Address;
 }
 
 /**
@@ -86,8 +116,31 @@ export function createStorageBatcher(config: BatcherConfig) {
       );
       console.log(`[storage-batcher] ${tag} recorded in MongoDB`);
 
-      // TODO Phase 3: Call FillRegistry.anchorBatch(rootHash, firstOrderHash, lastOrderHash)
-      // to emit FillBatchAnchored event on Base
+      // Anchor the Merkle root on-chain so anyone can verify the 0G data
+      if (config.walletClient && config.fillRegistryAddress) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wallet client generic type mismatch
+          const anchorTx = await (config.walletClient as any).writeContract({
+            chain: base,
+            address: config.fillRegistryAddress,
+            abi: AnchorBatchABI,
+            functionName: "anchorBatch",
+            args: [
+              rootHash as `0x${string}`,
+              firstOrderHash as `0x${string}`,
+              lastOrderHash as `0x${string}`,
+            ],
+          });
+          batchRecord.txHash = anchorTx;
+          console.log(`[storage-batcher] ${tag} anchored on-chain: ${anchorTx.slice(0, 10)}...`);
+
+          // Update MongoDB with the anchor tx hash
+          await collection.updateOne({ rootHash }, { $set: { txHash: anchorTx } });
+        } catch (err: any) {
+          const reason = err?.shortMessage ?? err?.message ?? "unknown";
+          console.warn(`[storage-batcher] ${tag} anchorBatch failed: ${reason}`);
+        }
+      }
     } catch (err) {
       console.error(`[storage-batcher] ${tag} upload failed:`, err);
       // Put records back in buffer for retry on next flush
