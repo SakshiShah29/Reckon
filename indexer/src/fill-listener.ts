@@ -8,6 +8,10 @@ import {
   PriorityOrderReactorABI,
   PRIORITY_ORDER_REACTOR,
 } from "@reckon-protocol/types";
+import { getDb } from "./db.js";
+
+const CURSOR_COLLECTION = "listener_cursors";
+const CURSOR_KEY = "fill-listener";
 
 const base = defineChain({
   id: 8453,
@@ -75,9 +79,13 @@ export async function startFillListener(
 
   let isRunning = true;
   const currentBlock = await client.getBlockNumber();
-  // Start lookback based on chunk size (small chunks = fewer blocks back to avoid slow catchup)
-  const lookback = maxChunkSize === 9n ? 50n : 1000n;
-  let lastProcessedBlock = currentBlock - lookback;
+
+  // Resume from persisted cursor, or start from current block on first boot
+  const db = await getDb();
+  const cursorDoc = await db.collection(CURSOR_COLLECTION).findOne({ key: CURSOR_KEY });
+  let lastProcessedBlock = cursorDoc
+    ? BigInt(cursorDoc.blockNumber)
+    : currentBlock;
   console.log(`[fill-listener] Starting from block ${lastProcessedBlock} (current: ${currentBlock})`);
 
   const poll = async () => {
@@ -125,6 +133,13 @@ export async function startFillListener(
         }
 
         lastProcessedBlock = to;
+
+        // Persist cursor so restarts resume from here
+        await db.collection(CURSOR_COLLECTION).updateOne(
+          { key: CURSOR_KEY },
+          { $set: { key: CURSOR_KEY, blockNumber: to.toString(), updatedAt: Date.now() } },
+          { upsert: true },
+        );
       } catch (err) {
         console.error("[fill-listener] Poll error:", err);
       }

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { createWalletClient, http, defineChain, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { startFillListener } from "./fill-listener.js";
@@ -9,6 +9,7 @@ import { startBondUnlocker } from "./bond-unlocker.js";
 import { startChallengeListener } from "./challenge-listener.js";
 import { createStorageBatcher, type BatcherConfig } from "./storage-batcher.js";
 import { closeDb } from "./db.js";
+import { initRegistrar, registerSolver, registerChallenger } from "./registrar.js";
 
 const base = defineChain({
   id: 8453,
@@ -26,6 +27,15 @@ function required(key: string): string {
 
 function optional(key: string): string | undefined {
   return process.env[key];
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
 }
 
 // ── Main ────────────────────────────────────────────────────────
@@ -147,15 +157,77 @@ async function main() {
     console.log("[indexer] Challenge listener disabled — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
   }
 
-  // ── Health HTTP server (keeps Render free-tier web service alive) ──
+  // ── Initialize registrar (needs both registries) ──────────────
+  const challengerRegistryAddress = optional("CHALLENGER_REGISTRY_ADDRESS") as Address | undefined;
+
+  if (solverRegistryAddress && challengerRegistryAddress) {
+    await initRegistrar({
+      rpcUrl: recorderRpcUrl,
+      relayerPrivateKey,
+      solverRegistryAddress,
+      challengerRegistryAddress,
+    });
+  } else {
+    console.log("[indexer] Registrar disabled — SOLVER_REGISTRY_ADDRESS or CHALLENGER_REGISTRY_ADDRESS not set");
+  }
+
+  // ── HTTP server (health + registration endpoints) ─────────────
   const port = parseInt(process.env["PORT"] ?? "10000", 10);
   const startedAt = Date.now();
-  createServer((_req, res) => {
-    const uptime = Math.floor((Date.now() - startedAt) / 1000);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", uptime, batcherPending: batcher?.pending ?? 0 }));
+
+  createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+
+    if (req.method === "GET" && url.pathname === "/health") {
+      const uptime = Math.floor((Date.now() - startedAt) / 1000);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", uptime, batcherPending: batcher?.pending ?? 0 }));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/register") {
+      if (!solverRegistryAddress || !challengerRegistryAddress) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Registrar not configured" }));
+        return;
+      }
+
+      try {
+        const body = await readBody(req);
+        const { label, address: ownerAddress, role } = JSON.parse(body);
+
+        if (!label || !ownerAddress || !role) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing required fields: label, address, role" }));
+          return;
+        }
+
+        if (role !== "solver" && role !== "challenger") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "role must be 'solver' or 'challenger'" }));
+          return;
+        }
+
+        const result =
+          role === "solver"
+            ? await registerSolver(label, ownerAddress)
+            : await registerChallenger(label, ownerAddress);
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        const message = err.shortMessage ?? err.message ?? "unknown error";
+        console.error("[registrar] Registration failed:", message);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: message }));
+      }
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
   }).listen(port, () => {
-    console.log(`[indexer] Health server listening on :${port}`);
+    console.log(`[indexer] HTTP server listening on :${port}`);
   });
 
   // ── Health logging ────────────────────────────────────────────
