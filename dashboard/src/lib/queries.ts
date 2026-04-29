@@ -69,7 +69,7 @@ export async function getSolverReputation(
   const db = await getDb();
   return db
     .collection<ReputationUpdate>(MONGO_COLLECTIONS.reputationUpdates)
-    .findOne({ solverNamehash: namehash });
+    .findOne({ solverNamehash: namehash as `0x${string}` });
 }
 
 /**
@@ -82,7 +82,7 @@ export async function getFillsBySolver(
   const db = await getDb();
   return db
     .collection<FillRecord>(MONGO_COLLECTIONS.fills)
-    .find({ fillerNamehash })
+    .find({ fillerNamehash: fillerNamehash as `0x${string}` })
     .sort({ fillBlock: -1 })
     .limit(limit)
     .toArray();

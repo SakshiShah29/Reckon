@@ -1,10 +1,6 @@
 import { MongoClient, type Db } from "mongodb";
 
-const MONGODB_URI = process.env.MONGODB_URI_RO;
-
-if (!MONGODB_URI) {
-  throw new Error("MONGODB_URI_RO environment variable is not set");
-}
+const MONGODB_URI = process.env.MONGODB_URI_RO ?? process.env.MONGODB_URI;
 
 const DB_NAME = "reckon";
 
@@ -17,8 +13,9 @@ let cachedDb: Db | null = null;
  */
 export async function getDb(): Promise<Db> {
   if (cachedDb) return cachedDb;
+  if (!MONGODB_URI) throw new Error("MONGODB_URI_RO environment variable is not set");
 
-  const client = new MongoClient(MONGODB_URI!);
+  const client = new MongoClient(MONGODB_URI);
   await client.connect();
 
   cachedClient = client;
