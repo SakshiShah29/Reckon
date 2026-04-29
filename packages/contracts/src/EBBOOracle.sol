@@ -30,7 +30,21 @@ contract EBBOOracle is Ownable {
     mapping(bytes32 pairKey => PoolRef[]) internal _poolsForPair;
     mapping(bytes32 pairKey => PendingProposal) internal _pending;
 
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    constructor(
+        address initialOwner,
+        address tokenA,
+        address tokenB,
+        PoolRef[] memory initialPools
+    ) Ownable(initialOwner) {
+        if (initialPools.length > 0) {
+            bytes32 key = pairKey(tokenA, tokenB);
+            for (uint256 i; i < initialPools.length; ++i) {
+                if (initialPools[i].pool == address(0)) revert ReckonErrors.ZeroAddress();
+                _poolsForPair[key].push(initialPools[i]);
+            }
+            emit ReckonEvents.PoolListCommitted(key);
+        }
+    }
 
     /// @notice Sorted-pair key — order-independent.
     function pairKey(address tokenA, address tokenB) public pure returns (bytes32) {

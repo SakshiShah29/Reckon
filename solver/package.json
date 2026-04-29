@@ -1,0 +1,26 @@
+{
+  "name": "@reckon-protocol/solver",
+  "version": "0.1.0",
+  "description": "Demo solver: receives signed UniswapX PriorityOrders and fills them on Base via the PriorityOrderReactor",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node --import tsx src/index.ts",
+    "dev": "node --import tsx --watch src/index.ts",
+    "swap-test": "node --import tsx test/swap-test.ts",
+    "swap-test:bad": "node --import tsx test/swap-test.ts --bad-fill"
+  },
+  "dependencies": {
+    "@reckon-protocol/types": "*",
+    "dotenv": "^16.4.0",
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

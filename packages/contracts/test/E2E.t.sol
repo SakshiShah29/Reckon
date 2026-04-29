@@ -92,7 +92,11 @@ contract E2ETest is Test {
         ownerRegistry = new OwnerRegistry(admin, attester);
         solverRegistry = new SolverRegistry(admin, relayer);
         challengerRegistry = new ChallengerRegistry(admin, relayer);
-        ebboOracle = new EBBOOracle(admin);
+        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
+        pools[0] = EBBOOracle.PoolRef({pool: POOL_A});
+        pools[1] = EBBOOracle.PoolRef({pool: POOL_B});
+        pools[2] = EBBOOracle.PoolRef({pool: POOL_C});
+        ebboOracle = new EBBOOracle(admin, USDC, WETH, pools);
 
         vault = new SolverBondVault(admin, IERC20(USDC), IReckonRegistrar(address(solverRegistry)));
         fillRegistry = new FillRegistry(admin, IReckonRegistrar(address(solverRegistry)), vault, recorder);
@@ -120,17 +124,6 @@ contract E2ETest is Test {
         vault.setChallenger(address(challenger));
         fillRegistry.setChallenger(address(challenger));
         royalty.setSolverBondVault(address(vault));
-        vm.stopPrank();
-
-        // EBBOOracle: propose + commit pool list
-        vm.startPrank(admin);
-        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
-        pools[0] = EBBOOracle.PoolRef({pool: POOL_A});
-        pools[1] = EBBOOracle.PoolRef({pool: POOL_B});
-        pools[2] = EBBOOracle.PoolRef({pool: POOL_C});
-        ebboOracle.proposePoolList(USDC, WETH, pools);
-        vm.warp(block.timestamp + 48 hours + 1);
-        ebboOracle.commitPoolList(USDC, WETH);
         vm.stopPrank();
 
         // Register solver + challenger
