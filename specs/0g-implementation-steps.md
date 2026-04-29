@@ -14,19 +14,16 @@
 - `indexer/src/owner-attester.ts` (168 LoC) — listens to ChallengerNFT Transfer events on Galileo
 - `agent/src/triage.ts` (208 LoC) — 0G Compute suspicion triage via broker
 - `agent/src/ebbo.ts` (200 LoC) — off-chain EBBO benchmark math
-- `agent/src/boot.ts` (99 LoC) — iNFT brain blob read + decrypt at agent boot
+- `agent/src/boot.ts` (~110 LoC) — iNFT brain blob read + decrypt at agent boot (reads tokenURI from Galileo on-chain)
 - `agent/src/provision.ts` (125 LoC) — 0G Compute broker provisioning
 - `agent/src/listener.ts` (158 LoC) — FillRecorded event listener
-- `agent/src/challenge.ts` (136 LoC) — challenge submission logic
+- `agent/src/coordinate.ts` (~250 LoC) — AXL gossip (stubbed) + 0G Storage KV claim dedup (acquire/check/release)
+- `agent/src/decide.ts` (~70 LoC) — cost-benefit analysis primitive
+- `agent/src/submit.ts` (~45 LoC) — KeeperHub webhook submission primitive
+- `agent/src/index.ts` (~260 LoC) — SKILL.md orchestrator: triage → ebbo → coordinate → decide → submit
+- `agent/src/challenge.ts` — re-exports from decide.ts + submit.ts (backwards compat)
 
 **What's NOT yet built** (from spec gap analysis):
-- `agent/src/coordinate.ts` primitive (~150 LoC) — the seam between 0G Storage KV and Gensyn AXL GossipSub; implements acquire/check/release claim actions
-- `agent/src/decide.ts` primitive (pure cost-benefit logic)
-- `agent/src/submit.ts` primitive (KeeperHub webhook trigger)
-- `agent/src/orchestrator.ts` (SKILL.md loop executor, drives all 5 primitives)
-- `SKILL.md` (agent behavior spec defining the 5-step decision loop)
-- 0G Storage KV integration (Batcher + KvClient) — consumed by `coordinate.ts`
-- Provider discovery via `createReadOnlyInferenceBroker`
 - Actual Galileo deployment (script exists, not yet run)
 - End-to-end iNFT mint → brain blob → agent boot → challenge flow
 

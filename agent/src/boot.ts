@@ -1,6 +1,24 @@
 import { unsealBrainBlob } from "@reckon-protocol/inft-tools";
 import { downloadBrainBlob } from "@reckon-protocol/inft-tools";
 import type { BrainBlob } from "@reckon-protocol/types";
+import { createPublicClient, http, defineChain } from "viem";
+
+const galileo = defineChain({
+  id: 16602,
+  name: "0G Galileo",
+  nativeCurrency: { name: "0G", symbol: "OG", decimals: 18 },
+  rpcUrls: { default: { http: ["https://evmrpc-testnet.0g.ai"] } },
+});
+
+const ChallengerNFTReadABI = [
+  {
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    name: "tokenURI",
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
 
 export interface AgentConfig {
   /** iNFT token ID on 0G Galileo */
@@ -15,8 +33,10 @@ export interface AgentConfig {
   zgRpcUrl: string;
   /** 0G Compute provider address */
   zgComputeProviderAddress: string;
-  /** Brain blob root hash (from iNFT tokenURI) — if known */
+  /** Brain blob root hash (from iNFT tokenURI) — if known, skips on-chain read */
   brainRootHash?: string;
+  /** ChallengerNFT contract address on 0G Galileo */
+  challengerNftAddress?: `0x${string}`;
   /** Fill Registry contract address on Base */
   fillRegistryAddress: `0x${string}`;
 }
@@ -44,11 +64,29 @@ export async function bootAgent(config: AgentConfig): Promise<BootedAgent> {
   let rootHash = config.brainRootHash;
 
   if (!rootHash) {
-    // In production, read tokenURI from ChallengerNFT on 0G Galileo
-    // For now, require it via env or config
-    throw new Error(
-      "brainRootHash is required. Set it from iNFT tokenURI or BRAIN_ROOT_HASH env var.",
-    );
+    if (!config.challengerNftAddress) {
+      throw new Error(
+        "Either brainRootHash or challengerNftAddress is required to read tokenURI from 0G Galileo.",
+      );
+    }
+
+    console.log(`[boot] Reading tokenURI from ChallengerNFT on Galileo...`);
+    const galileoClient = createPublicClient({
+      chain: galileo,
+      transport: http(config.zgRpcUrl),
+    });
+
+    rootHash = await galileoClient.readContract({
+      address: config.challengerNftAddress,
+      abi: ChallengerNFTReadABI,
+      functionName: "tokenURI",
+      args: [BigInt(config.tokenId)],
+    });
+
+    if (!rootHash || rootHash.length === 0) {
+      throw new Error(`tokenURI is empty for iNFT #${config.tokenId}`);
+    }
+    console.log(`[boot] tokenURI resolved: ${rootHash.slice(0, 16)}...`);
   }
 
   console.log(`[boot] Downloading brain blob from 0G Storage (root: ${rootHash.slice(0, 16)}...)`);
@@ -94,6 +132,7 @@ export function configFromEnv(): AgentConfig {
     zgRpcUrl: required("ZG_RPC_URL"),
     zgComputeProviderAddress: required("ZG_COMPUTE_PROVIDER_ADDRESS"),
     brainRootHash: process.env["BRAIN_ROOT_HASH"],
+    challengerNftAddress: process.env["CHALLENGER_NFT_ADDRESS"] as `0x${string}` | undefined,
     fillRegistryAddress: required("FILL_REGISTRY_ADDRESS") as `0x${string}`,
   };
 }

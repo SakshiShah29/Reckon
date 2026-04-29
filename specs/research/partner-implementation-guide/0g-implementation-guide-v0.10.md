@@ -292,8 +292,12 @@ if (err) throw err;
 Read pattern (used by `coordinate.ts` primitive):
 
 ```typescript
+import { ethers } from "ethers";
+
 const kvClient = new KvClient(KV_NODE_URL);
-const value = await kvClient.getValue(STREAM_ID, encodedKey);
+// Key must be base64-encoded per 0G docs
+const keyBase64 = ethers.encodeBase64(keyBytes);
+const value = await kvClient.getValue(STREAM_ID, keyBase64);
 ```
 
 **How `coordinate.ts` uses both 0G and Gensyn (AXL):**
@@ -355,10 +359,10 @@ await broker.inference.acknowledgeProviderSigner(PROVIDER_ADDRESS);
 
 // Per-request (called by triage.ts primitive): fetch service metadata + signed headers
 const meta    = await broker.inference.getServiceMetadata(PROVIDER_ADDRESS);
-const headers = await broker.inference.getRequestHeaders(PROVIDER_ADDRESS, /* prompt */ promptString);
+const headers = await broker.inference.getRequestHeaders(PROVIDER_ADDRESS);
 ```
 
-`meta.endpoint` is the `<service_url>` you pass to OpenAI's `base_url`. `headers` is an opaque map you forward to the model — the broker uses these to settle payment after the response.
+`meta.endpoint` is the `<service_url>` you pass to the OpenAI SDK's `baseURL`. `headers` is an opaque map you forward to the model — the broker uses these to settle payment after the response.
 
 **Balance monitoring:** `broker.ledger.getLedger()` returns `{totalBalance, availableBalance}`. The orchestrator checks this on boot and logs a warning if `availableBalance < 0.5 0G`.
 
@@ -368,8 +372,8 @@ const headers = await broker.inference.getRequestHeaders(PROVIDER_ADDRESS, /* pr
 import OpenAI from "openai";
 
 const openai = new OpenAI({
-  apiKey:  "app-sk-not-used",     // broker headers carry the auth
-  baseURL: `${meta.endpoint}/v1/proxy`,
+  apiKey:  "placeholder",          // required by SDK but unused — 0G broker headers carry auth
+  baseURL: `${meta.endpoint}/chat/completions`,
   defaultHeaders: headers,
 });
 
@@ -379,10 +383,11 @@ const completion = await openai.chat.completions.create({
 });
 ```
 
-Then settle:
+Then settle — pass the `chatID` (from `completion.id`), not the completion object:
 
 ```typescript
-await broker.inference.processResponse(PROVIDER_ADDRESS, completion);
+const chatID = completion.id;
+await broker.inference.processResponse(PROVIDER_ADDRESS, chatID);
 ```
 
 ### 3.4a Provider discovery (resolved — on-chain registry exists)

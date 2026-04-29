@@ -361,11 +361,11 @@ async function pollClaims(): Promise<{ claim: ClaimMessage; fromPeer: string } |
 
 **Why both AXL gossip AND 0G KV:** AXL is fast (sub-second broadcast across 3 nodes) but ephemeral — the message queue is in-memory, non-persistent, empties on restart. Critically, **AXL has zero buffering or retry at the transport layer**: if the hub is unreachable, `/send` returns 502 immediately and GossipSub silently drops the message (bare `except Exception: pass` in `_send`). 0G KV is durable but slow (~1-2s for a `Batcher.exec()` round-trip). AXL is the latency layer; KV is the truth layer. Combined, they give us "fast common case + correct in failure mode."
 
-**AXL message queue details (from source — `recv.go`):** Messages that don't match MCP/A2A streams go to an in-memory FIFO queue. Critical constraints:
-- **Bounded capacity of 100 messages.** When full, the oldest message is silently evicted (`q.items = q.items[1:]`). Under burst load, claim messages can be lost.
+**AXL message queue details:** Messages that don't match MCP/A2A streams go to an in-memory FIFO queue. Critical constraints:
+- **Unbounded:** messages accumulate until read. There is no cap or eviction policy — if polling stops, memory grows without limit. `coordinate.ts` must drain promptly to avoid unbounded memory growth.
 - **Single-consumer:** each `GET /recv` dequeues one message. Returns **204 No Content immediately** when empty (no long-poll, no WebSocket, no SSE).
 - **Non-persistent:** empties on node restart.
-- **`coordinate.ts` must drain aggressively** during the 30s backoff window to avoid hitting the 100-message cap. Poll at ~200ms intervals (150 polls over 30s). With 3 nodes and realistic claim rates, we're well under the cap, but document the limit.
+- **`coordinate.ts` should poll at ~200ms intervals** during the 30s backoff window (150 polls over 30s) to minimize message detection latency and prevent memory buildup.
 - The `X-From-Peer-Id` response header on `/recv` provides the sender's 64-char hex public key — used by `coordinate.ts` to validate claim signatures against known peer identities.
 
 ### 2.4 How `coordinate.ts` fits in the SKILL.md loop
@@ -396,7 +396,6 @@ export const AXL_DEADLINE_SECONDS = 60;   // claim is invalid after this; anothe
 export const AXL_KV_VERIFY_TIMEOUT_MS = 2500;  // if KV read exceeds this, fail closed (yield)
 export const AXL_API_URL          = "http://127.0.0.1:9002";  // local AXL node HTTP API
 export const AXL_POLL_INTERVAL_MS = 200;   // /recv poll frequency during backoff window
-export const AXL_RECV_QUEUE_CAP   = 100;   // AXL's internal queue cap (from source); drain before this
 export const AXL_SEND_TIMEOUT_MS  = 5000;  // abort /send if TCP dial blocks (partition scenario)
 ```
 
@@ -601,11 +600,11 @@ All items from the v0.7 guide's "open items" list are now resolved. Three were r
   - **Mitigation added to Phase 0 checklist**: empirical partition test — kill hub for 30s, verify spokes resume gossip after hub restarts, verify KV catches any claims that were lost during partition.
 
 - ✅ **Message ordering guarantees.** Source code confirms: **no formal ordering guarantee.** Specifically:
-  - `recv.go`: `DefaultRecvQueue` is a FIFO slice with **bounded capacity of 100**. When full, oldest message is evicted (`q.items = q.items[1:]`) — **silent data loss under load**.
+  - `recv.go`: `DefaultRecvQueue` is an **unbounded** in-memory FIFO slice. Messages accumulate until read — no cap, no eviction. The risk is unbounded memory growth if polling stops, not silent data loss.
   - `send.go` / `dial/`: each `/send` creates a **new, independent TCP connection** (not multiplexed, not reused). Different messages may take different TCP paths with different latencies.
   - `gossipsub.py`: `random.shuffle(candidates)` introduces non-determinism in forwarding path selection.
   - **In our 3-node hub-and-spoke**: messages from Spoke A and Spoke B both route through the hub. The hub's queue receives them in TCP arrival order, which is **likely FIFO under normal conditions** but not guaranteed under concurrent sends. If Spoke A's TCP connection is slow and Spoke B's is fast, the hub may see B's message first.
-  - **Implication for Reckon**: claim dedup uses `claimedAt` timestamps, not message arrival order, so ordering doesn't affect correctness. But the **100-message queue cap** is a real constraint — `coordinate.ts` must drain `/recv` aggressively (§2.3). With 3 nodes and realistic claim rates (N=20 fills/min burst), we're well under the cap, but document the limit and add a metric for queue depth monitoring.
+  - **Implication for Reckon**: claim dedup uses `claimedAt` timestamps, not message arrival order, so ordering doesn't affect correctness. The queue is unbounded so there's no cap to worry about, but `coordinate.ts` should still drain `/recv` promptly (§2.3) to prevent unbounded memory growth. With 3 nodes and realistic claim rates (N=20 fills/min burst), memory is not a concern, but add monitoring for queue depth at scale.
 
 - ✅ **`/recv` blocking vs polling.** Source code confirms: **strictly polling, no alternatives.**
   - `recv.go`: `HandleRecv` calls `DefaultRecvQueue.Pop()`. If empty, returns **204 No Content immediately** — no blocking, no timeout parameter, no long-poll.

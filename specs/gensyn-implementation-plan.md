@@ -133,7 +133,7 @@ print(f'PASS: pubkey={d[\"our_public_key\"][:16]}... ipv6={d[\"our_ipv6\"]}')
 
 **Config for Node B (`node-config-2.json`) — peers to Node A:**
 
-**Note:** `tcp_port` is the gVisor userspace TCP listener — it runs inside the Yggdrasil virtual network stack, NOT on the host. All nodes must use the **same `tcp_port`** value because when Node B sends to Node A, it dials Node A's Yggdrasil IPv6 on this port. If Node A listens on 7000 but Node B assumes 7001, the connection is refused.
+**Note:** `tcp_port` is the gVisor userspace TCP listener — it runs inside the Yggdrasil virtual network stack, NOT on the host. Since it operates in the virtual network (not the host network), all nodes use the **same `tcp_port`** value (7000) regardless of whether they're on the same machine or separate VPS instances. When Node B sends to Node A, it dials Node A's Yggdrasil IPv6 on this port — both sides must agree on the value.
 
 ```json
 {
@@ -897,16 +897,230 @@ PASS: partition recovery worked via KV
 
 ---
 
-### Step 3.2 — Deploy to production topology (Hetzner + Fly.io)
+### Step 3.2 — Deploy an AXL node + agent on a VPS (single-unit guide)
 
-**What:** Move from local 3-node simulation to actual Hetzner hub + Fly.io US + Fly.io EU.
+**What:** Deploy a single challenger unit (AXL node + Reckon agent) on a cloud VPS (DigitalOcean Droplet, Hetzner, AWS Lightsail, etc.). Each VPS runs one AXL node and one agent as a co-located pair. The agent talks to its local AXL node on `localhost:9002`. To run 3 full challenger agents, repeat this on 3 separate VPS instances.
+
+**Architecture per VPS:**
+```
+┌─────────────────────────────────┐
+│            VPS                  │
+│  ┌───────────┐  ┌────────────┐ │
+│  │  AXL Node │←→│   Agent    │ │
+│  │  :9001 TLS│  │ coordinate │ │
+│  │  :9002 API│  │  triage    │ │
+│  │  :7000 tcp│  │  ebbo      │ │
+│  └───────────┘  │  decide    │ │
+│                 │  submit    │ │
+│                 └────────────┘ │
+└─────────────────────────────────┘
+Agent hits http://127.0.0.1:9002
+```
+
+**Requirements:**
+- VPS with Ubuntu 22.04+ (or Debian 12+), 2 vCPU, 2 GB RAM minimum
+- Go 1.25.x (for AXL node)
+- Node.js 20+ (for agent)
+- A public IP address on at least one VPS (the hub)
+
+**Part A — AXL node setup:**
+
+```bash
+# 1. SSH into the VPS
+ssh root@<VPS_IP>
+
+# 2. Install Go 1.25.x
+wget https://go.dev/dl/go1.25.5.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.5.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+
+# 3. Clone and build AXL
+git clone https://github.com/gensyn-ai/axl.git
+cd axl
+go build -o node ./cmd/node/
+
+# 4. Generate Ed25519 key
+openssl genpkey -algorithm ed25519 -out private.pem
+
+# 5. Write node config
+# For the HUB VPS (accepts inbound peers, needs public IP):
+cat > node-config.json <<'EOF'
+{
+  "PrivateKeyPath": "private.pem",
+  "Peers": [],
+  "Listen": ["tls://0.0.0.0:9001"],
+  "api_port": 9002,
+  "tcp_port": 7000
+}
+EOF
+
+# For a SPOKE VPS (connects outbound to hub, works behind NAT):
+cat > node-config.json <<'EOF'
+{
+  "PrivateKeyPath": "private.pem",
+  "Peers": ["tls://<HUB_PUBLIC_IP>:9001"],
+  "Listen": [],
+  "api_port": 9002,
+  "tcp_port": 7000
+}
+EOF
+
+# 6. Open firewall ports
+# Hub only: allow inbound TLS peering
+sudo ufw allow 9001/tcp
+# All nodes: no need to expose 9002 externally — agent is on localhost
+```
+
+**Part B — Agent setup:**
+
+```bash
+# 1. Install Node.js 20+
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 2. Clone the Reckon repo
+cd /root
+git clone <RECKON_REPO_URL> reckon
+cd reckon
+
+# 3. Install dependencies
+npm install
+
+# 4. Build packages (types must build before agent)
+npm run build --workspace=packages/types
+npm run build --workspace=inft-tools
+npm run build --workspace=agent
+
+# 5. Write agent .env
+cat > agent/.env <<'EOF'
+# ── iNFT identity ──
+CHALLENGER_NFT_TOKEN_ID=<your-token-id>
+ZG_AGENT_PRIVATE_KEY=<your-0g-wallet-private-key>
+
+# ── 0G infrastructure ──
+ZG_RPC_URL=https://evmrpc-testnet.0g.ai
+ZG_INDEXER_URL=https://indexer-storage-testnet-standard.0g.ai
+ZG_FLOW_CONTRACT=0x22E03a6A89B950F1c82ec5e74F8eCa321a105296
+ZG_KV_NODE_URL=https://kv-testnet.0g.ai
+ZG_COMPUTE_PROVIDER_ADDRESS=<provider-address>
+
+# ── Base mainnet ──
+BASE_RPC_URL=https://mainnet.base.org
+FILL_REGISTRY_ADDRESS=<fill-registry-address>
+SOLVER_BOND_VAULT_ADDRESS=<bond-vault-address>
+
+# ── AXL coordination (agent talks to local node) ──
+AXL_API_URL=http://127.0.0.1:9002
+AXL_PEER_KEYS=<peer1-pubkey>,<peer2-pubkey>
+
+# ── KeeperHub ──
+KH_WEBHOOK_URL=<keeperhub-webhook-url>
+KH_API_KEY=<keeperhub-api-key>
+
+# ── Mode ──
+HEADLESS_MODE=true
+EOF
+
+# 6. Verify agent starts
+cd agent
+npm run start
+```
+
+**Part C — Run both as systemd services:**
+
+```bash
+# AXL node service
+cat > /etc/systemd/system/axl-node.service <<EOF
+[Unit]
+Description=AXL Node
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/axl
+ExecStart=/root/axl/node -config node-config.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Agent service (starts after AXL node is up)
+cat > /etc/systemd/system/reckon-agent.service <<EOF
+[Unit]
+Description=Reckon Challenger Agent
+After=network.target axl-node.service
+Requires=axl-node.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/reckon/agent
+ExecStart=/usr/bin/node --import tsx src/index.ts
+Restart=always
+RestartSec=10
+EnvironmentFile=/root/reckon/agent/.env
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable axl-node reckon-agent
+sudo systemctl start axl-node
+sudo systemctl start reckon-agent
+
+# Check status
+sudo systemctl status axl-node reckon-agent
+journalctl -u reckon-agent -f
+```
+
+**Part D — Verify the unit is working:**
+
+```bash
+# AXL node is up
+curl -s http://127.0.0.1:9002/topology | python3 -c "
+import sys, json; d=json.load(sys.stdin)
+print(f'Public key: {d[\"our_public_key\"]}')
+print(f'Peers: {len(d.get(\"peers\", []))}')
+"
+
+# Agent is running and listening for fills
+journalctl -u reckon-agent --no-pager -n 5
+# Should show: "[orchestrator] Running. Pipeline: triage → ebbo → coordinate → decide → submit"
+```
+
+**Important notes:**
+- Each VPS is a self-contained challenger unit: 1 AXL node + 1 agent. For 3 agents, deploy on 3 VPS instances.
+- `tcp_port: 7000` is the same across all VPS instances — it's a gVisor virtual port, not a host port.
+- The hub VPS must have a public IP with port 9001 open. Spoke VPS instances connect outbound and work behind NAT.
+- Port 9002 (AXL API) does NOT need to be exposed externally — the agent accesses it on localhost.
+- If the hub's AXL node restarts, spoke AXL nodes must also restart — Yggdrasil TLS sessions do not auto-reconnect. The systemd `Restart=always` handles this if the spoke detects the dead connection. The agent service has `Requires=axl-node.service` so it restarts together.
+- Save each node's public key from `/topology` — the other two agents need it in their `AXL_PEER_KEYS` env var.
+- Each agent needs its own iNFT (`CHALLENGER_NFT_TOKEN_ID`) and its own 0G wallet key.
+
+**Exit criteria:** Both services running, agent logs show "listening for fills", `/topology` shows peers connected (≥1 for spokes, ≥2 for hub).
+
+---
+
+### Step 3.3 — Deploy full production topology (3 VPS instances)
+
+**What:** Using the single-unit guide from Step 3.2, deploy 3 challenger units on 3 separate VPS instances: one hub + two spokes. Each VPS runs its own AXL node + agent pair.
+
+**Deployment order:**
+1. Deploy VPS 1 (hub) — `Listen: ["tls://0.0.0.0:9001"]`, `Peers: []`
+2. Note hub's public IP and public key from `/topology`
+3. Deploy VPS 2 (spoke A) — `Peers: ["tls://<HUB_IP>:9001"]`
+4. Deploy VPS 3 (spoke B) — `Peers: ["tls://<HUB_IP>:9001"]`
+5. On each VPS, set `AXL_PEER_KEYS` in `.env` to the public keys of the **other two** nodes
 
 **Validation test:**
 ```bash
 # From your local machine (not on any of the 3 VPSes):
 
-# Verify hub is reachable
-curl -s --connect-timeout 5 http://<HETZNER_IP>:9002/topology | python3 -c "
+# Verify hub mesh is connected (need port 9001 open on hub, not 9002)
+ssh root@<HUB_IP> "curl -s http://127.0.0.1:9002/topology" | python3 -c "
 import sys, json; d=json.load(sys.stdin)
 print(f'Hub key: {d[\"our_public_key\"][:16]}...')
 print(f'Hub peers: {len(d.get(\"peers\", []))}')
@@ -914,16 +1128,22 @@ assert len(d.get('peers', [])) == 2, f'Expected 2 peers, got {len(d.get(\"peers\
 print('PASS: Production topology connected')
 "
 
-# Cross-region message test (Fly.io US → Fly.io EU via Hetzner)
-# SSH to Fly.io US, send to Fly.io EU's pubkey, SSH to Fly.io EU, recv
-# PASS: message arrives within 500ms (cross-Atlantic via Germany)
+# Verify all 3 agents are running
+for VPS in <HUB_IP> <SPOKE_A_IP> <SPOKE_B_IP>; do
+  ssh root@$VPS "systemctl is-active reckon-agent" 
+done
+# All should print "active"
+
+# Cross-region message test (Spoke A → Spoke B via Hub)
+# SSH to Spoke A, send to Spoke B's pubkey, SSH to Spoke B, recv
+# PASS: message arrives within 500ms
 ```
 
-**Exit criteria:** All 3 production nodes connected, cross-region messaging works within 500ms.
+**Exit criteria:** All 3 VPS instances running (AXL node + agent), hub shows 2 peers, all agents logging "listening for fills".
 
 ---
 
-### Step 3.3 — Demo video segment recording
+### Step 3.4 — Demo video segment recording
 
 **What:** Record the AXL/Gensyn demo segment (0:55-1:20 per v0.10 spec).
 
@@ -950,7 +1170,7 @@ print('PASS: Production topology connected')
 
 ---
 
-### Step 3.4 — Final README "Why AXL?" section
+### Step 3.5 — Final README "Why AXL?" section
 
 **What:** Write the Gensyn-facing README section explaining what AXL is, why we chose it, and what we contributed back.
 
@@ -970,7 +1190,8 @@ print('PASS: Production topology connected')
 
 Before proceeding to Phase 4 (deferred), confirm all of the following:
 - [ ] 4-hour smoke test: zero double-submissions, all slashable fills challenged
-- [ ] Production topology deployed and connected
+- [ ] Single-unit VPS deployment guide followed and validated (AXL node + agent running as systemd services)
+- [ ] Production topology deployed (3 VPS instances, each running AXL node + agent) and connected
 - [ ] Demo video segment recorded
 - [ ] README "Why AXL?" section written
 - [ ] Packet capture saved for demo video

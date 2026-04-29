@@ -31,16 +31,12 @@ export async function runSuspicionTriage(
 
   try {
     const meta = await broker.inference.getServiceMetadata(providerAddress);
-    const headers = await broker.inference.getRequestHeaders(
-      providerAddress,
-      prompt,
-    );
+    const headers = await broker.inference.getRequestHeaders(providerAddress);
 
-    // Use OpenAI SDK compatibility
     const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({
-      apiKey: "app-sk-not-used", // broker headers carry the auth
-      baseURL: `${meta.endpoint}/v1/proxy`,
+      apiKey: "placeholder", // required by SDK but unused — 0G broker headers carry auth
+      baseURL: `${meta.endpoint}/chat/completions`,
       defaultHeaders: headers,
     });
 
@@ -54,7 +50,6 @@ export async function runSuspicionTriage(
         temperature: 0.1,
       });
     } catch {
-      // Fallback to smaller model
       model = FALLBACK_MODEL;
       completion = await openai.chat.completions.create({
         model: FALLBACK_MODEL,
@@ -64,8 +59,9 @@ export async function runSuspicionTriage(
       });
     }
 
-    // Settle payment
-    await broker.inference.processResponse(providerAddress, completion);
+    // Settle: pass chatID (completion.id) per 0G docs
+    const chatID = completion.id ?? "";
+    await broker.inference.processResponse(providerAddress, chatID);
 
     const rawResponse = completion.choices[0]?.message?.content ?? "";
     const score = parseTriageScore(rawResponse);
@@ -101,15 +97,12 @@ export async function generateSlashExplanation(
 
   try {
     const meta = await broker.inference.getServiceMetadata(providerAddress);
-    const headers = await broker.inference.getRequestHeaders(
-      providerAddress,
-      prompt,
-    );
+    const headers = await broker.inference.getRequestHeaders(providerAddress);
 
     const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({
-      apiKey: "app-sk-not-used",
-      baseURL: `${meta.endpoint}/v1/proxy`,
+      apiKey: "placeholder", // required by SDK but unused — 0G broker headers carry auth
+      baseURL: `${meta.endpoint}/chat/completions`,
       defaultHeaders: headers,
     });
 
@@ -132,7 +125,8 @@ export async function generateSlashExplanation(
       });
     }
 
-    await broker.inference.processResponse(providerAddress, completion);
+    const chatID = completion.id ?? "";
+    await broker.inference.processResponse(providerAddress, chatID);
 
     const explanation = completion.choices[0]?.message?.content ?? "";
     return { explanation, model };

@@ -2,153 +2,132 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createPublicClient, http, defineChain, type Address } from "viem";
 import { bootAgent, configFromEnv, type BootedAgent } from "./boot.js";
 import { startFillListener } from "./listener.js";
 import { computeEBBO, isSlashable } from "./ebbo.js";
 import { runSuspicionTriage, generateSlashExplanation } from "./triage.js";
-import { decideChallenge, submitChallengeViaKeeperHub } from "./challenge.js";
+import { coordinate, type CoordinateConfig } from "./coordinate.js";
+import { decideChallenge } from "./decide.js";
+import { submitChallengeViaKeeperHub } from "./submit.js";
 import type { FillRecord } from "@reckon-protocol/types";
 import { EBBO_PRECISION } from "@reckon-protocol/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENT_ROOT = join(__dirname, "..");
 
-// ── OpenClaw workspace config ───────────────────────────────────
-// Load workspace markdown files that define this agent's behavior.
-// These are the canonical references OpenClaw uses for agent identity,
-// operating procedures, and periodic tasks.
+const base = defineChain({
+  id: 8453,
+  name: "Base",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+});
 
-function loadWorkspaceFile(filename: string): string {
+const SolverBondVaultABI = [
+  {
+    inputs: [{ name: "solverNamehash", type: "bytes32" }],
+    name: "bonds",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+function loadSkillMd(): string {
   try {
-    return readFileSync(join(AGENT_ROOT, filename), "utf-8");
+    return readFileSync(join(AGENT_ROOT, "SKILL.md"), "utf-8");
   } catch {
     return "";
   }
 }
 
-const workspace = {
-  soul: loadWorkspaceFile("SOUL.md"),
-  agents: loadWorkspaceFile("AGENTS.md"),
-  heartbeat: loadWorkspaceFile("HEARTBEAT.md"),
-  identity: loadWorkspaceFile("IDENTITY.md"),
-};
-
-// ── Skill registry ──────────────────────────────────────────────
-// Each skill maps to a SKILL.md definition + a TypeScript implementation.
-// Skills are lazy-loaded: the SKILL.md is read on-demand, but the
-// implementation functions are imported at startup.
-
-interface Skill {
-  name: string;
-  description: string;
-  path: string;
-}
-
-function discoverSkills(): Skill[] {
-  const skillsDir = join(AGENT_ROOT, "skills");
-  const skills: Skill[] = [];
-
-  for (const name of [
-    "inft-boot",
-    "fill-monitor",
-    "suspicion-triage",
-    "ebbo-check",
-    "challenge-submit",
-  ]) {
-    try {
-      const md = readFileSync(join(skillsDir, name, "SKILL.md"), "utf-8");
-      // Parse description from YAML frontmatter
-      const descMatch = md.match(/^description:\s*(.+)$/m);
-      skills.push({
-        name,
-        description: descMatch?.[1] ?? name,
-        path: join(skillsDir, name),
-      });
-    } catch {
-      console.warn(`[openclaw] Skill ${name}/SKILL.md not found, skipping`);
-    }
-  }
-
-  return skills;
-}
-
-// Suspicion threshold: skip EBBO computation for fills scoring below this
 const SUSPICION_THRESHOLD = 0.3;
 
 /**
- * Reckon Challenger Agent — OpenClaw runtime.
+ * Reckon Challenger Agent — SKILL.md orchestrator (v0.10).
  *
- * This agent follows the OpenClaw workspace pattern:
- * - SOUL.md defines purpose, values, and behavioral boundaries
- * - AGENTS.md defines boot sequence and operating procedures
- * - HEARTBEAT.md defines periodic monitoring tasks
- * - skills/ contains SKILL.md files for each capability
- *
- * The agent loop implements the pipeline from AGENTS.md:
- * Boot → Listen → Triage → EBBO → Decide → Coordinate → Submit
+ * Pipeline per SKILL.md:
+ *   FillRecorded → triage.ts → ebbo.ts → coordinate.ts → decide.ts → submit.ts
  */
 async function main() {
-  console.log("=== Reckon Challenger Agent (OpenClaw Runtime) ===");
-  console.log();
+  console.log("=== Reckon Challenger Agent ===");
 
-  // ── Load workspace ──────────────────────────────────────────
-  if (workspace.soul) {
-    const nameMatch = workspace.identity.match(/^name:\s*(.+)$/m);
-    console.log(`[openclaw] Identity: ${nameMatch?.[1] ?? "Reckon Challenger"}`);
+  const skillMd = loadSkillMd();
+  if (skillMd) {
+    console.log("[orchestrator] SKILL.md loaded");
+  } else {
+    console.log("[orchestrator] SKILL.md not found — running with defaults");
   }
 
-  const skills = discoverSkills();
-  console.log(`[openclaw] Loaded ${skills.length} skills: ${skills.map((s) => s.name).join(", ")}`);
-  console.log();
-
-  // ── Skill: inft-boot ─────────────────────────────────────────
-  // Per AGENTS.md boot sequence steps 1-4
+  // ── Boot: read iNFT, decrypt brain ─────────────────────────
   const config = configFromEnv();
   let agent: BootedAgent;
 
   try {
     agent = await bootAgent(config);
-    console.log("[skill:inft-boot] Brain decrypted successfully");
+    console.log("[boot] Brain decrypted successfully");
   } catch (err) {
-    console.error("[skill:inft-boot] Boot failed:", err);
-    console.log("[skill:inft-boot] Running in headless mode (no iNFT brain). Using defaults.");
-
-    // Headless mode for development/testing without iNFT
-    agent = {
-      config,
-      brain: {
-        axl_ed25519_secret: "0".repeat(64),
-        ebbo_threshold_prefs: { minSlash: "1000000", maxBondPct: 50 },
-        kh_api_key: process.env["KH_API_KEY"] ?? "kh_dev",
-        model_config: { model: "Qwen3-32B", maxTokens: 512 },
-        performance_history: [],
-      },
-    };
+    if (process.env["HEADLESS_MODE"] === "true") {
+      console.warn("[boot] Boot failed, running in headless mode:", err);
+      agent = {
+        config,
+        brain: {
+          axl_ed25519_secret: "0".repeat(64),
+          ebbo_threshold_prefs: { minSlash: "1000000", maxBondPct: 50 },
+          kh_api_key: process.env["KH_API_KEY"] ?? "kh_dev",
+          model_config: { model: "Qwen3-32B", maxTokens: 512 },
+          performance_history: [],
+        },
+      };
+    } else {
+      console.error("[boot] Fatal: brain blob required. Set HEADLESS_MODE=true to bypass.");
+      process.exit(1);
+    }
   }
 
-  // ── Initialize 0G Compute broker (lazy) ────────────────────
+  // ── 0G Compute broker (lazy) ───────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let computeBroker: any | null = null;
 
   async function getComputeBroker() {
     if (computeBroker) return computeBroker;
     try {
-      computeBroker = await createBroker(config.zgRpcUrl, process.env["ZG_AGENT_PRIVATE_KEY"]!);
+      computeBroker = await createBroker(
+        config.zgRpcUrl,
+        process.env["ZG_AGENT_PRIVATE_KEY"]!,
+      );
       return computeBroker;
     } catch (err) {
-      console.warn("[openclaw] Failed to create 0G Compute broker:", err);
+      console.warn("[orchestrator] Failed to create 0G Compute broker:", err);
       return null;
     }
   }
 
-  // ── Skill: fill-monitor (event handler) ────────────────────
-  // Per AGENTS.md main loop: for each FillRecorded event, run the pipeline
+  // ── Coordinate config ──────────────────────────────────────
+  const coordConfig: CoordinateConfig = {
+    zgRpcUrl: config.zgRpcUrl,
+    zgIndexerUrl: config.zgIndexerUrl,
+    zgFlowContract: process.env["ZG_FLOW_CONTRACT"] ?? "",
+    zgPrivateKey: process.env["ZG_AGENT_PRIVATE_KEY"] ?? "",
+    kvNodeUrl: process.env["ZG_KV_NODE_URL"],
+    axlApiUrl: process.env["AXL_API_URL"],
+    axlPeerKeys: process.env["AXL_PEER_KEYS"]?.split(",").filter(Boolean),
+    axlPrivateKeyHex: agent.brain.axl_ed25519_secret,
+  };
+
+  // ── Base client for on-chain reads ─────────────────────────
+  const baseClient = createPublicClient({
+    chain: base,
+    transport: http(config.baseRpcUrl),
+  });
+  const bondVaultAddress = process.env["SOLVER_BOND_VAULT_ADDRESS"] as Address | undefined;
+
+  // ── SKILL.md pipeline: per-fill handler ────────────────────
   async function handleFill(fill: FillRecord) {
     const tag = fill.orderHash.slice(0, 10);
-    console.log(`\n[skill:fill-monitor] New fill detected: ${tag}`);
+    console.log(`\n[orchestrator] ── Fill ${tag} ──`);
 
-    // ── Skill: suspicion-triage ────────────────────────────────
-    // Per AGENTS.md step 1: call 0G Compute for quick score
+    // Step 1: triage.ts — 0G Compute suspicion score
     const broker = await getComputeBroker();
     let suspicionScore = 0.5;
 
@@ -161,33 +140,27 @@ async function main() {
         );
         suspicionScore = triageResult.score;
         console.log(
-          `[skill:suspicion-triage] ${tag} score: ${suspicionScore.toFixed(3)} (model: ${triageResult.model})`,
+          `[triage] ${tag} score=${suspicionScore.toFixed(3)} model=${triageResult.model}`,
         );
       } catch (err) {
-        console.warn(`[skill:suspicion-triage] ${tag} failed, using default:`, err);
+        console.warn(`[triage] ${tag} failed, defaulting to 0.5:`, err);
       }
     } else {
-      console.log(`[skill:suspicion-triage] ${tag} no compute broker, defaulting to 0.5`);
+      console.log(`[triage] ${tag} no broker, defaulting to 0.5`);
     }
 
     if (suspicionScore < SUSPICION_THRESHOLD) {
-      console.log(
-        `[skill:suspicion-triage] ${tag} score ${suspicionScore.toFixed(3)} < ${SUSPICION_THRESHOLD}, skipping`,
-      );
+      console.log(`[triage] ${tag} score below threshold, skipping`);
       return;
     }
 
-    // ── Skill: ebbo-check ──────────────────────────────────────
-    // Per AGENTS.md step 2-3: compute benchmark and check slashability
-    console.log(`[skill:ebbo-check] ${tag} computing benchmark at block ${fill.fillBlock}...`);
+    // Step 2: ebbo.ts — deterministic benchmark math
+    console.log(`[ebbo] ${tag} computing benchmark at block ${fill.fillBlock}...`);
     const ebboResult = await computeEBBO(
       config.baseRpcUrl,
       fill.tokenIn as `0x${string}`,
       fill.tokenOut as `0x${string}`,
       BigInt(fill.fillBlock),
-    );
-    console.log(
-      `[skill:ebbo-check] ${tag} benchmark: ${ebboResult.benchmarkPrice} (pools: ${ebboResult.poolPrices.map((p) => p.toString()).join(", ")})`,
     );
 
     const { slashable, expectedOutput, shortfall } = isSlashable(
@@ -198,31 +171,70 @@ async function main() {
     );
 
     if (!slashable) {
-      console.log(`[skill:ebbo-check] ${tag} not slashable (output >= expected)`);
+      console.log(`[ebbo] ${tag} not slashable`);
       return;
     }
 
     console.log(
-      `[skill:ebbo-check] ${tag} SLASHABLE! shortfall=${shortfall} expected=${expectedOutput} actual=${fill.outputAmount}`,
+      `[ebbo] ${tag} SLASHABLE shortfall=${shortfall} expected=${expectedOutput}`,
     );
 
-    // ── Skill: challenge-submit ────────────────────────────────
-    // Per AGENTS.md step 4-6: economic decision + AXL coordination + submit
+    // Step 3: coordinate.ts — AXL gossip + 0G KV claim dedup
+    const checkResult = await coordinate(
+      "check",
+      fill.orderHash,
+      config.tokenId,
+      coordConfig,
+    );
 
-    // Step 4: Economic decision
-    // TODO: Read actual solver bond from SolverBondVault
-    const solverBond = 1000n * 10n ** 6n; // 1000 USDC placeholder
+    if (checkResult.claimedBy && checkResult.claimedBy !== config.tokenId) {
+      console.log(`[coordinate] ${tag} already claimed by ${checkResult.claimedBy}`);
+      return;
+    }
+
+    const acquireResult = await coordinate(
+      "acquire",
+      fill.orderHash,
+      config.tokenId,
+      coordConfig,
+    );
+
+    if (!acquireResult.claimAcquired) {
+      console.log(
+        `[coordinate] ${tag} claim failed: ${acquireResult.reason} (claimed by ${acquireResult.claimedBy})`,
+      );
+      return;
+    }
+
+    console.log(`[coordinate] ${tag} claim acquired`);
+
+    // Step 4: decide.ts — cost-benefit analysis
+    let solverBond = 1000n * 10n ** 6n; // default 1000 USDC
+    if (bondVaultAddress) {
+      try {
+        const bondRaw = await baseClient.readContract({
+          address: bondVaultAddress,
+          abi: SolverBondVaultABI,
+          functionName: "bonds",
+          args: [fill.fillerNamehash],
+        });
+        solverBond = bondRaw;
+      } catch (err) {
+        console.warn(`[decide] ${tag} bond read failed, using default:`, err);
+      }
+    }
 
     const decision = decideChallenge(fill, shortfall, solverBond, agent.brain);
     console.log(
-      `[skill:challenge-submit] ${tag} decision: ${decision.shouldChallenge ? "CHALLENGE" : "SKIP"} — ${decision.reason}`,
+      `[decide] ${tag} ${decision.shouldChallenge ? "CHALLENGE" : "SKIP"} — ${decision.reason}`,
     );
 
     if (!decision.shouldChallenge) {
+      await coordinate("release", fill.orderHash, config.tokenId, coordConfig);
       return;
     }
 
-    // Step 5: NL explanation (non-blocking, per AGENTS.md step 7)
+    // NL explanation (non-blocking)
     const shortfallPct = (
       (Number(shortfall) / Number(expectedOutput)) *
       100
@@ -240,22 +252,19 @@ async function main() {
         shortfallPct,
         config.zgComputeProviderAddress,
         broker,
-      ).then((result) => {
-        console.log(`[skill:challenge-submit] ${tag} NL: ${result.explanation}`);
-      }).catch(() => {
-        // Non-critical, template fallback exists
-      });
+      )
+        .then((r) => console.log(`[submit] ${tag} NL: ${r.explanation}`))
+        .catch(() => {});
     }
 
-    // Step 6: Submit via KeeperHub
-    // TODO: In Phase 2, AXL claim coordination (step 5) goes here
+    // Step 5: submit.ts — KeeperHub webhook
     const webhookUrl = process.env["KH_WEBHOOK_URL"];
     if (!webhookUrl) {
-      console.log(`[skill:challenge-submit] ${tag} KH_WEBHOOK_URL not set, would submit challenge`);
+      console.log(`[submit] ${tag} KH_WEBHOOK_URL not set, dry-run complete`);
       return;
     }
 
-    console.log(`[skill:challenge-submit] ${tag} submitting via KeeperHub...`);
+    console.log(`[submit] ${tag} submitting via KeeperHub...`);
     const result = await submitChallengeViaKeeperHub(
       fill.orderHash,
       config.tokenId,
@@ -264,48 +273,38 @@ async function main() {
     );
 
     if (result.success) {
-      console.log(`[skill:challenge-submit] ${tag} submitted! RunID: ${result.runId}`);
+      console.log(`[submit] ${tag} submitted! RunID: ${result.runId}`);
     } else {
-      console.error(`[skill:challenge-submit] ${tag} failed: ${result.error}`);
+      console.error(`[submit] ${tag} failed: ${result.error}`);
     }
   }
 
-  // ── Start fill listener (AGENTS.md boot step 6) ────────────
+  // ── Start fill listener ────────────────────────────────────
   const stopListener = await startFillListener(
     config.baseRpcUrl,
     config.fillRegistryAddress,
     handleFill,
   );
 
-  // ── Heartbeat (per HEARTBEAT.md) ───────────────────────────
-  // Parse interval from HEARTBEAT.md frontmatter
-  const heartbeatMatch = workspace.heartbeat.match(/^interval:\s*(\d+)/m);
-  const heartbeatIntervalSec = heartbeatMatch ? parseInt(heartbeatMatch[1], 10) : 30;
-
+  // ── Heartbeat ──────────────────────────────────────────────
   const heartbeatTimer = setInterval(() => {
-    console.log(`[openclaw:heartbeat] Tick — agent alive, listening for fills`);
-    // Future: health checks, gap detection, claim cleanup, stats per HEARTBEAT.md
-  }, heartbeatIntervalSec * 1000);
+    console.log(`[orchestrator] heartbeat — alive, listening for fills`);
+  }, 30_000);
 
-  // ── Graceful shutdown (per AGENTS.md shutdown section) ──────
+  // ── Graceful shutdown ──────────────────────────────────────
   const shutdown = () => {
-    console.log("\n[openclaw] Shutting down...");
+    console.log("\n[orchestrator] Shutting down...");
     clearInterval(heartbeatTimer);
     stopListener();
-    // TODO Phase 3: write performance_history back to brain blob
-    // TODO Phase 3: scrub AXL private key from local filesystem
     process.exit(0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  console.log(`[openclaw] Agent running. Heartbeat every ${heartbeatIntervalSec}s. Listening for fills...`);
+  console.log("[orchestrator] Running. Pipeline: triage → ebbo → coordinate → decide → submit");
 }
 
-/**
- * Create 0G Compute broker. Separate function for lazy init.
- */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function createBroker(rpcUrl: string, privateKey: string): Promise<any> {
   const { ethers } = await import("ethers");
@@ -315,7 +314,7 @@ async function createBroker(rpcUrl: string, privateKey: string): Promise<any> {
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(privateKey, provider);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM ethers type mismatch
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return await createZGComputeNetworkBroker(wallet as any);
 }
 
@@ -327,6 +326,6 @@ function formatPrice(price1e18: bigint): string {
 }
 
 main().catch((err) => {
-  console.error("[openclaw] Fatal error:", err);
+  console.error("[orchestrator] Fatal:", err);
   process.exit(1);
 });

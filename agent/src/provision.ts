@@ -82,6 +82,34 @@ export async function provisionComputeSubAccounts(
 }
 
 /**
+ * Discovers 0G Compute providers serving a given model.
+ * Uses createReadOnlyInferenceBroker — no wallet needed.
+ */
+export async function discoverProviders(
+  rpcUrl: string,
+  modelFilter: string = "Qwen3-32B",
+): Promise<{ provider: string; model: string; endpoint: string }[]> {
+  const { createReadOnlyInferenceBroker } = await import(
+    "@0glabs/0g-serving-broker"
+  );
+
+  const readBroker = await createReadOnlyInferenceBroker(rpcUrl);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const services: any[] = await readBroker.listService();
+
+  return services
+    .filter(
+      (s: { serviceType: string; model: string }) =>
+        s.serviceType === "chatbot" && s.model.includes(modelFilter),
+    )
+    .map((s: { provider: string; model: string; endpoint: string }) => ({
+      provider: s.provider,
+      model: s.model,
+      endpoint: s.endpoint,
+    }));
+}
+
+/**
  * CLI entrypoint for provisioning. Run with:
  *   node --import tsx agent/src/provision.ts
  */

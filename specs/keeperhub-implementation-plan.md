@@ -231,7 +231,7 @@ mcp__keeperhub__get_execution_logs({ executionId: "<anvil-run>" })
 # Verify the agent key authenticates and is distinct from the admin key:
 curl -s -o /dev/null -w "%{http_code}" \
   -X POST https://app.keeperhub.com/mcp \
-  -H "Authorization: Bearer $KH_AGENT_KEY" \
+  -H "Authorization: Bearer kh_0NxSwyj3anqqqJppiQp56v_oYG5GgLe9" \
   -H "Content-Type: application/json" \
   -d '{"method": "list_workflows", "params": {}}'
 # Expected: 200
@@ -409,6 +409,10 @@ curl -s -X POST \
 ```
 
 ---
+
+curl -X POST http://147.182.164.208:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"anvil_setBalance","params":["0xC204c6FEC66FbFa5467B8080638C939DF9850bf8","0x56BC75E2D63100000"],"id":1}'
 
 ### Step 6: Build the Reputation Flush Schedule Workflow
 

@@ -44,6 +44,9 @@ export const AXL_CLAIM_TOPIC = "reckon/claim/v1";
 export const AXL_BACKOFF_SECONDS = 30;
 export const AXL_DEADLINE_SECONDS = 60;
 export const AXL_KV_VERIFY_TIMEOUT_MS = 2500;
+export const AXL_POLL_INTERVAL_MS = 200;
+export const AXL_SEND_TIMEOUT_MS = 5000;
+export const AXL_API_URL = "http://127.0.0.1:9002" as const;
 
 // ── 0G Galileo ──────────────────────────────────────────────────
 export const ZG_FLOW_CONTRACT = "0x22E03a6A89B950F1c82ec5e74F8eCa321a105296" as const;
