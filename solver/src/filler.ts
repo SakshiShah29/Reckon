@@ -44,6 +44,11 @@ export interface FillerState {
 
 let state: FillerState | null = null;
 
+export function getFillerState(): FillerState {
+  if (!state) throw new Error("Filler not initialized");
+  return state;
+}
+
 export function initFiller(config: FillerConfig): Address {
   const account = privateKeyToAccount(config.solverPrivateKey);
 

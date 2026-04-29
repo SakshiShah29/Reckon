@@ -2,13 +2,18 @@ import "dotenv/config";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { type Address, type Hex } from "viem";
-import { initFiller, getHealth, fillOrder } from "./filler.js";
+import { initFiller, getHealth, fillOrder, getFillerState } from "./filler.js";
 import { decodeOrder, validateOrder } from "./validate.js";
+import { bootstrapSolver } from "./bootstrap.js";
 
 function required(key: string): string {
   const val = process.env[key];
   if (!val) throw new Error(`Missing required env var: ${key}`);
   return val;
+}
+
+function optional(key: string): string | undefined {
+  return process.env[key];
 }
 
 const solverPrivateKey = required("SOLVER_PRIVATE_KEY") as `0x${string}`;
@@ -17,6 +22,28 @@ const reckonValidatorAddress = required("RECKON_VALIDATOR_ADDRESS") as Address;
 const port = parseInt(process.env["PORT"] ?? "3000", 10);
 
 const solverAddress = initFiller({ rpcUrl: baseRpcUrl, solverPrivateKey });
+
+// ── Bootstrap: register + bond if needed ────────────────────────
+const solverBondVaultAddress = optional("SOLVER_BOND_VAULT_ADDRESS") as Address | undefined;
+const relayerUrl = optional("RELAYER_URL");
+const solverLabel = optional("SOLVER_LABEL");
+
+if (solverBondVaultAddress && relayerUrl && solverLabel) {
+  const fillerState = getFillerState();
+  bootstrapSolver({
+    publicClient: fillerState.publicClient,
+    walletClient: fillerState.walletClient,
+    solverAddress,
+    solverBondVaultAddress,
+    relayerUrl,
+    solverLabel,
+  }).catch((err) => {
+    console.error(`[bootstrap] Failed:`, err.message);
+    console.error(`[bootstrap] Solver may not be registered or bonded — fills could revert`);
+  });
+} else {
+  console.log("[solver] Bootstrap skipped — set SOLVER_BOND_VAULT_ADDRESS, RELAYER_URL, SOLVER_LABEL to enable");
+}
 
 const app = new Hono();
 
