@@ -9,7 +9,8 @@
     "axl-broadcast",
     "indexer",
     "ccip-gateway",
-    "keeper-skills"
+    "keeper-skills",
+    "solver"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
