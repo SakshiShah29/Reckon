@@ -1,17 +1,47 @@
 # Gensyn Implementation Guide for Reckon v0.10
 
 **Source:** https://docs.gensyn.ai/llms-full.txt (with cross-references to `github.com/gensyn-ai/axl` README and `github.com/gensyn-ai/ree`)
-**Date compiled:** 2026-04-28
+**Date compiled:** 2026-04-29
 **Scope:** Concrete implementation guide for every place Reckon v0.10 touches Gensyn. The bounty surface is **AXL only** — REE and Delphi are out of scope for v0.10 but documented here as a "what's next" lever (REE) and a "do not confuse" sibling (Delphi/Gensyn Testnet).
+
+> **Architecture note — single agent, dual infrastructure:** A Reckon challenger agent is NOT built on Gensyn alone or 0G alone. Gensyn (AXL) and 0G (Storage, KV, Compute, ChallengerNFT) are **co-load-bearing infrastructure providers** that together form a single challenger agent identity. See §0.1 below for the full mapping.
 
 Reckon's Gensyn surface (per spec FR-8, NFR-2, Phase 0/2/3):
 
 1. **AXL mesh** — three-node hub-and-spoke (Hetzner public hub + Fly.io US spoke + Fly.io EU spoke) for first-claim-wins challenger swarm coordination.
 2. **GossipSub-pattern channel** — forked from `examples/python-client/gossipsub/gossipsub.py`, claim message schema `{orderHash, agentTokenId, claimedAt, deadline}`.
-3. **`coordinate.ts` primitive** — one of the 5 standalone TypeScript scripts in the SKILL.md-defined agent loop. Wraps AXL GossipSub broadcast + 0G Storage KV claim state management. ~150 LoC.
+3. **`coordinate.ts` primitive** — one of the 5 standalone TypeScript scripts in the SKILL.md-defined agent loop. Wraps AXL GossipSub broadcast + 0G Storage KV claim state management. ~150 LoC. This primitive is the primary integration seam where Gensyn and 0G meet.
 4. **`@reckon-protocol/axl-claim-broadcast`** — open-source helper package (Phase 3 Day 17-18, Builder B) that extracts the coordination pattern from `coordinate.ts` into a reusable library.
 
 What Reckon does **not** use: Gensyn Testnet (chain 685685), the $AI token, Delphi, Verde, NoLoCo, Judge, RL Swarm, SAPO, BlockAssist, CodeAssist, CheckFree, SkipPipe. AXL is off-chain and gas-free. Pin this in README and demo script — the most common judge confusion is "are you on the Gensyn rollup?" — answer is no.
+
+---
+
+## 0.1 Dual-infrastructure architecture — how Gensyn + 0G form one agent
+
+A single Reckon challenger agent is composed of 5 primitives. Each primitive leans on a different infrastructure provider:
+
+| Primitive | Infra Provider | What it uses | Speed |
+|---|---|---|---|
+| `triage.ts` | **0G Compute** | Qwen3-32B suspicion scoring | ~2-5s |
+| `ebbo.ts` | **Neither** (pure math) | Local optimal-route calculation | <100ms |
+| `coordinate.ts` | **Both Gensyn + 0G** | AXL gossip (fast, ephemeral) + 0G Storage KV (slow, durable claim state) | 30s backoff |
+| `decide.ts` | **Neither** (pure logic) | Local cost-benefit go/no-go | <100ms |
+| `submit.ts` | **0G Storage Log** | Batched fill audit trail | ~1-2s |
+
+**The glue is the ChallengerNFT (iNFT).** The iNFT brain blob, stored on **0G Storage** and encrypted with AES-256-GCM, contains the AXL Ed25519 keypair. At boot, the orchestrator:
+
+1. Reads the iNFT brain from **0G Storage** (see `0g-implementation-guide` §2.3).
+2. Decrypts it to extract the **AXL Ed25519 key** (`axl_ed25519_secret` field).
+3. Writes the key to `private.pem` on local FS.
+4. Launches `./node -config node-config.json` — the node derives its mesh identity from this key.
+5. On graceful shutdown, scrubs `private.pem` (the canonical copy lives on 0G Storage).
+
+This means: **on-chain identity (ChallengerNFT on 0G Galileo) = off-chain identity (AXL peer ID) = claim signer.** When an iNFT transfers to a new owner, the AXL identity travels with it — same node, same public key, same mesh reputation.
+
+**Neither provider alone is the agent.** Gensyn provides the real-time P2P coordination layer (sub-second gossip). 0G provides storage, compute, and on-chain identity (durable state + AI inference). Together they are one agent.
+
+**`coordinate.ts` is where both providers meet.** It is the only primitive that touches both Gensyn (AXL `/send`, `/recv`) and 0G (Storage KV `getValue`, `Batcher.exec`). This makes it the critical integration seam — if either provider is down, `coordinate.ts` degrades gracefully (AXL down → KV-only mode is slower but correct; KV down → gossip-only mode is fast but not durable).
 
 ---
 
@@ -96,14 +126,7 @@ brew install openssl
 
 The private key is referenced in `node-config.json` (§1.3). The node derives a deterministic IPv6 address and a 64-character hex public key from this keypair. **The public key IS the node's identity on the mesh** — it replaces IP-based addressing entirely.
 
-**Storage:** for the challenger agents (which are iNFTs), the Ed25519 private key is part of the **brain blob on 0G Storage** (see `0g-implementation-guide`). On agent boot:
-
-1. Decrypt brain blob via AES-256-GCM.
-2. Write `axl_ed25519_secret` field out to `private.pem` on the local FS.
-3. Launch `./node -config node-config.json`.
-4. On graceful shutdown, scrub `private.pem` (the canonical copy is on 0G Storage).
-
-This makes the AXL identity portable with iNFT ownership: when an iNFT transfers to a new owner, the new owner inherits the AXL identity automatically — same node, same public key, same mesh reputation.
+**Storage:** for the challenger agents (which are iNFTs), the Ed25519 private key is part of the **brain blob on 0G Storage** (see `0g-implementation-guide` §2.3 and §0.1 above). The full boot sequence is described in §0.1. This is the critical link between the two infrastructure providers — the 0G-stored iNFT brain contains the Gensyn AXL identity, making on-chain identity = off-chain identity = claim signer.
 
 ### 1.3 Topology: hub-and-spoke, 3 nodes
 
@@ -262,7 +285,9 @@ AXL ships **example applications** in `examples/`, not packaged libraries:
 
 For Reckon's first-claim-wins dedup, **GossipSub is the right primitive** — broadcast-once, all-peers-see-it, no per-recipient request overhead. MCP/A2A are request/response (wrong shape). Convergecast is aggregation (also wrong shape).
 
-**Plan:** fork `examples/python-client/gossipsub/gossipsub.py`, rewrite in TypeScript as `coordinate.ts` (one of the 5 agent primitives), swap the message format, define our backoff/timeout semantics. The Python GossipSub example uses `send`/`recv` HTTP endpoints — our TypeScript port does the same via `fetch()`.
+**Plan:** fork `examples/python-client/gossipsub/gossipsub.py`, rewrite in TypeScript as `agent/src/coordinate.ts` (one of the 5 agent primitives), swap the message format, define our backoff/timeout semantics. The Python GossipSub example uses `send`/`recv` HTTP endpoints — our TypeScript port does the same via `fetch()`.
+
+**Where this lives:** `agent/src/coordinate.ts` (~150 LoC) is the **seam between Gensyn and 0G**. This section documents the AXL GossipSub side (broadcast, backoff, polling). The 0G Storage KV side (durable claim writes via `Batcher.exec()`, reads via `KvClient`) is documented in the [0G implementation guide](./0g-implementation-guide-v0.10.md) §2.4. Both halves live in the same file.
 
 ### 2.2 Claim message schema
 
@@ -372,6 +397,7 @@ export const AXL_KV_VERIFY_TIMEOUT_MS = 2500;  // if KV read exceeds this, fail 
 export const AXL_API_URL          = "http://127.0.0.1:9002";  // local AXL node HTTP API
 export const AXL_POLL_INTERVAL_MS = 200;   // /recv poll frequency during backoff window
 export const AXL_RECV_QUEUE_CAP   = 100;   // AXL's internal queue cap (from source); drain before this
+export const AXL_SEND_TIMEOUT_MS  = 5000;  // abort /send if TCP dial blocks (partition scenario)
 ```
 
 Tradeoffs:
@@ -430,7 +456,7 @@ if (result.outcome === "won") {
 - npm scope: `@reckon-protocol`
 - License: MIT
 - README pre-empts: "How is this different from raw AXL?" → "AXL gives you an encrypted mesh with a local HTTP API; we give you the claim semantics (broadcast, backoff, dedup, durable verification) on top of it."
-- One example: `examples/two-agent-race.ts` — boots two local AXL nodes (different `api_port` + `tcp_port`), fires simultaneous claims for the same orderHash, demonstrates one wins deterministically.
+- One example: `examples/two-agent-race.ts` — boots two local AXL nodes (different `api_port`, same `tcp_port`), fires simultaneous claims for the same orderHash, demonstrates one wins deterministically.
 - Bench: include a 10-line benchmark showing claim-publish-to-peer-receive latency under 200ms on the production topology.
 
 This package is what we point Gensyn judges at when they ask "what did you contribute back?"
@@ -492,7 +518,7 @@ The receipt JSON gets pinned to 0G Storage Log alongside the fill batch; the on-
 - [ ] `node-config.json` written per §1.3 (hub vs spoke shapes, including `api_port` and `tcp_port`)
 - [ ] Three-node handshake confirmed: launch each `./node -config node-config.json`, verify `curl http://127.0.0.1:9002/topology` shows expected peers on the hub
 - [ ] Exchange and document 64-char hex public keys for all 3 nodes in shared secrets vault
-- [ ] AXL `examples/python-client/gossipsub/gossipsub.py` runs end-to-end on all 3 nodes (sanity check before porting to TypeScript)
+- [ ] ~~AXL `gossipsub.py` runs end-to-end~~ REMOVED — `gossipsub.py` is a library class (no `__main__`, no CLI). Raw `/send`+`/recv` validated in the 3-node topology test covers this. The GossipSub protocol pattern (lazy-first forwarding, dedup) is ported directly into `coordinate.ts` in Phase 2.
 - [ ] **Partition test**: kill Hetzner hub for 30s, verify spokes get 502 on `/send`, verify GossipSub silently drops (no crash), verify spokes resume gossip after hub restarts, verify 0G KV catches claims lost during partition
 - [ ] Draft initial SKILL.md including `coordinate.ts` step (trigger, inputs, expected JSON output, failure handling)
 
@@ -502,7 +528,7 @@ The receipt JSON gets pinned to 0G Storage Log alongside the fill batch; the on-
 - [ ] Implement claim message signing/verification (Ed25519 sig over keccak256 of canonical fields)
 - [ ] Validate incoming claims against `X-From-Peer-Id` header from AXL's `/recv` response
 - [ ] Pin topic name `reckon/claim/v1`, backoff (30s), deadline (60s), AXL API URL in `@reckon-protocol/types/constants.ts`
-- [ ] Two-agent race test: simultaneous claims for same `orderHash`, exactly one wins (run 2 local AXL nodes with different `api_port`/`tcp_port`)
+- [ ] Two-agent race test: simultaneous claims for same `orderHash`, exactly one wins (run 2 local AXL nodes with different `api_port`, same `tcp_port`)
 - [ ] Three-agent race test: same, with one agent simulated-crashed mid-claim → second agent takes over after 60s deadline
 - [ ] Yggdrasil packet capture saved for demo video (Phase 4)
 
@@ -530,6 +556,7 @@ The receipt JSON gets pinned to 0G Storage Log alongside the fill batch; the on-
 
 These are commitments the spec should reference back to:
 
+0. **Single agent = Gensyn AXL + 0G (Storage, KV, Compute, ChallengerNFT).** Neither provider alone is the agent. `coordinate.ts` is the integration seam where both meet. The iNFT brain blob on 0G Storage contains the AXL Ed25519 keypair, unifying on-chain and off-chain identity.
 1. **Build from source, not binary.** Pin commit SHA in CI. Go 1.25.x required; Go 1.26+ needs `GOTOOLCHAIN=go1.25.5` workaround.
 2. **Three nodes, not two.** Hetzner public hub + Fly.io US + Fly.io EU. ~$5/month total.
 3. **GossipSub-pattern, not MCP/A2A.** Ported from `examples/python-client/gossipsub/gossipsub.py` to TypeScript as `coordinate.ts`. Topic `reckon/claim/v1`.
@@ -566,10 +593,10 @@ All items from the v0.7 guide's "open items" list are now resolved. Three were r
   - **Implication for `coordinate.ts`**: when porting from Python to TypeScript, preserve the lazy-first forwarding ratio (1 eager + N-1 lazy per relay hop). For our 3-node topology, this means: originator pushes to 2 peers eagerly; each relay pushes to 1 eagerly and 0 lazily (only 1 remaining peer). Effectively, all messages reach all nodes within 1 hop. The IHAVE/IWANT machinery provides value only if we scale beyond 3 nodes.
 
 - ✅ **Behavior under partition (hub goes down).** Source code confirms: **AXL has zero buffering, retry, or store-and-forward.** Specifically:
-  - `send.go`: each `/send` creates a **new TCP connection** via `dial.DialPeerConnection`. If the hub is unreachable, the dial fails and the HTTP bridge returns **502 Bad Gateway** immediately. No retry queue.
+  - `send.go`: each `/send` creates a **new TCP connection** via `dial.DialPeerConnection`. If the hub is unreachable, the dial **blocks until the OS-level TCP connect timeout** (30-75s depending on platform) before the HTTP bridge returns **502 Bad Gateway**. No retry queue. **Implication for `coordinate.ts`:** wrap every `fetch(AXL_API + "/send", ...)` call with `AbortSignal.timeout(5000)` to prevent a single dead peer from blocking the entire 30s backoff window.
   - `gossipsub.py`: `_send` wraps the send function in bare `except Exception: pass` — errors are **silently swallowed**. Messages are dropped, not buffered.
   - `_maintain_mesh` during heartbeat does `mesh &= self.peers`, pruning disappeared peers. In hub-and-spoke with no alternative paths, the mesh shrinks to empty.
-  - **Recovery**: requires the hub to restart and spokes to re-peer. No automatic reconnection in the GossipSub layer (though Yggdrasil itself may re-establish the TLS link).
+  - **Recovery**: requires a **full restart of all nodes** (hub + spokes). Yggdrasil TLS sessions do NOT automatically reconnect after the hub process dies and restarts — spokes hold a stale connection and `/send` blocks indefinitely. In production, use a process supervisor (systemd, Docker restart policy) that detects the dead TLS link and restarts the spoke node. A hub restart without spoke restarts leaves the mesh permanently partitioned until manual intervention.
   - **Implication for Reckon**: this is the strongest argument for 0G Storage KV as co-load-bearing truth layer. If the hub partitions for even 5 seconds, gossip claims are silently lost. The `coordinate.ts` flow already writes to KV as durable backup (§2.3 step 6), which covers this failure mode. Document in the operational runbook: "hub partition = gossip is degraded but KV ensures no double-submits."
   - **Mitigation added to Phase 0 checklist**: empirical partition test — kill hub for 30s, verify spokes resume gossip after hub restarts, verify KV catches any claims that were lost during partition.
 
@@ -595,6 +622,13 @@ If any of these behave differently in practice, update this guide in place — n
 ---
 
 ## Changelog from v0.7 guide
+
+### Dual-infrastructure architecture (Gensyn + 0G = one agent)
+- Added §0.1 documenting how the 5 agent primitives map to Gensyn vs 0G surfaces
+- Added iNFT brain blob → AXL identity bootstrap sequence (the glue between providers)
+- Added degradation modes: AXL down → KV-only (slower but correct), KV down → gossip-only (fast but not durable)
+- Framed `coordinate.ts` as the critical integration seam where both providers meet
+- Added spec delta #0 locking in the dual-provider commitment
 
 ### Agent architecture: OpenClaw monolith → SKILL.md + `coordinate.ts` primitive
 - v0.7 guide referenced "OpenClaw-based agent" with a monolithic loop. v0.10 spec defines the agent as a **SKILL.md file + 5 standalone TypeScript primitives + thin orchestrator**

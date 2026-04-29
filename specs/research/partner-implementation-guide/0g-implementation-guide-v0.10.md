@@ -245,6 +245,8 @@ Sealing flow:
 
 KV is mutable key-value built atop the Log layer. **The flow contract address is required when constructing a `Batcher`** (file uploads do not need it — the `indexer` client abstracts it; KV does need it, explicitly).
 
+**Where this lives:** `agent/src/coordinate.ts` (~150 LoC) — one of the 5 standalone TypeScript primitives in the agent's SKILL.md loop. This primitive is the **seam between 0G and Gensyn**: it uses AXL GossipSub (Gensyn) for fast ephemeral claim broadcast and 0G Storage KV for durable claim persistence. The AXL side is documented in the [Gensyn implementation guide](./gensyn-implementation-guide-v0.10.md) §2; this section covers the 0G KV side. Both halves are implemented in the same file.
+
 Stream design — pin this:
 
 - **Single protocol-wide `streamId`** for `claim_state` (one stream, not per-agent).
@@ -294,13 +296,17 @@ const kvClient = new KvClient(KV_NODE_URL);
 const value = await kvClient.getValue(STREAM_ID, encodedKey);
 ```
 
-**Ordering with AXL (as implemented in `coordinate.ts`):** AXL gossip is the fast path (sub-second first-claim broadcast). KV is the durable backup truth that survives an AXL hub restart. The `coordinate.ts` primitive implements three actions:
+**How `coordinate.ts` uses both 0G and Gensyn (AXL):**
 
-1. **`acquire`**: broadcast claim on AXL GossipSub channel, then write claim to KV via `Batcher.exec()`.
-2. **`check`**: read `kvClient.getValue(streamId, orderHash)` to confirm no other agent's claim is durably persisted.
-3. **`release`**: clear claim from KV (used when agent decides not to challenge after all).
+AXL gossip is the fast path (sub-second first-claim broadcast across the 3-node mesh). 0G Storage KV is the durable backup truth that survives an AXL hub restart or network partition. Both layers are co-load-bearing — AXL handles latency, KV handles correctness. The `coordinate.ts` primitive (`agent/src/coordinate.ts`) implements three actions:
+
+1. **`acquire`**: broadcast claim via AXL GossipSub (`POST localhost:9002/send` to each peer), wait 30s backoff window polling for competing claims (`GET localhost:9002/recv`), then write claim to 0G KV via `Batcher.exec()`. If a competing claim with an earlier `claimedAt` arrives during the backoff window, yield immediately.
+2. **`check`**: read `kvClient.getValue(streamId, orderHash)` from 0G KV to confirm no other agent's claim is durably persisted.
+3. **`release`**: clear claim from 0G KV (used when agent decides not to challenge after all).
 
 The orchestrator calls `coordinate.ts` with `action=check` before `action=acquire`, and again before `submit.ts` runs, per the SKILL.md decision tree.
+
+**Dependency:** `coordinate.ts` requires a running AXL node (see [Gensyn implementation guide](./gensyn-implementation-guide-v0.10.md) §1) accessible at `localhost:9002`, AND a funded 0G wallet for KV writes. Both must be operational before the orchestrator can run the full SKILL.md loop. If AXL is down, `coordinate.ts` falls back to KV-only mode (slower but still correct). If 0G KV is down, `coordinate.ts` fails closed — it yields the claim rather than risk a double-submit.
 
 **Note on docs gaps:** the docs do not detail `Batcher` constructor parameters fully. Builder B should follow the `0g-storage-client` Go reference and the TypeScript starter-kit examples (`github.com/0gfoundation/0g-storage-ts-starter-kit`) to derive the storage `nodes` array. If unresolved by Phase 2 Day 12, fall back to the `0g-storage-client` CLI + a Node child-process wrapper — uglier, but unblocks.
 
@@ -503,7 +509,7 @@ These are not speculative — they're the lines this implementation guide commit
 11. **Faucet drip is a Phase 0 dependency**, not a Phase 4 panic. Schedule it Day 1, 2, 3. Google Cloud faucet available as backup. (Updated in v0.10.)
 12. **"Indexer" in this guide always means the 0G SDK client** (`Indexer` class from `@0gfoundation/0g-ts-sdk`). The Reckon off-chain service that subscribes to chain events is called the **relayer** (renamed in v0.10). (New in v0.10.)
 13. **`triage.ts` is the sole 0G Compute consumer** among the 5 agent primitives. Its failure mode outputs `{score: 0.5, reason: "..."}` so the orchestrator always proceeds to `ebbo.ts`. (New in v0.10.)
-14. **`coordinate.ts` is the sole 0G Storage KV consumer** among the 5 agent primitives. It implements acquire/check/release actions against the `claim_state` stream. (New in v0.10.)
+14. **`coordinate.ts` (`agent/src/coordinate.ts`) is the seam between 0G and Gensyn.** It is the sole 0G Storage KV consumer among the 5 agent primitives (acquire/check/release against the `claim_state` stream) AND the sole AXL GossipSub consumer (claim broadcast + backoff polling). Both the [0G guide](./0g-implementation-guide-v0.10.md) §2.4 and the [Gensyn guide](./gensyn-implementation-guide-v0.10.md) §2 document their respective halves of this primitive. (New in v0.10.)
 
 ---
 
