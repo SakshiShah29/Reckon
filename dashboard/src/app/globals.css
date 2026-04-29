@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-card: #141414;
+  --color-surface: #0a0a0a;
+  --color-border: #222222;
+  --color-teal: #00D4AA;
+  --color-blue: #6366f1;
+  --color-purple: #a78bfa;
+  --color-amber: #f59e0b;
+  --color-red: #ef4444;
+  --color-green: #34d399;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: var(--font-sans);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  background: #141414;
+  border: 1px solid #222;
+  border-radius: 12px;
+}
+
+.card:hover {
+  border-color: #333;
+}
+
+/* Live dot pulse */
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(52, 211, 153, 0); }
+}
+
+/* Progress bar fill */
+.progress-fill {
+  animation: grow 1s ease-out forwards;
+  transform-origin: left;
+}
+@keyframes grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }

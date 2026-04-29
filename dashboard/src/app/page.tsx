@@ -1,58 +1,59 @@
-import { getDashboardStats, getRecentFills, getRecentSlashes } from "@/lib/queries";
+import { StatsCards } from "@/components/stats-cards";
+import { FillChart } from "@/components/fill-chart";
+import { IndexerHealth } from "@/components/indexer-health";
+import { SolverLeaderboard } from "@/components/solver-leaderboard";
+import { SlashDonut } from "@/components/slash-donut";
 import { FillFeed } from "@/components/fill-feed";
-import { SlashFeed } from "@/components/slash-feed";
-import { StatsBar } from "@/components/stats-bar";
+import { ChallengeFeed } from "@/components/challenge-feed";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 5; // ISR: revalidate every 5 seconds
-
-export default async function HomePage() {
-  let stats = { totalFills: 0, totalChallenges: 0, totalSlashes: 0, totalSlashedUSDC: 0 };
-  let fills: Awaited<ReturnType<typeof getRecentFills>> = [];
-  let slashes: Awaited<ReturnType<typeof getRecentSlashes>> = [];
-
-  try {
-    [stats, fills, slashes] = await Promise.all([
-      getDashboardStats(),
-      getRecentFills(20),
-      getRecentSlashes(10),
-    ]);
-  } catch (err) {
-    // MongoDB may not be available during development
-    console.error("[dashboard] Failed to fetch data:", err);
-  }
-
+export default function HomePage() {
   return (
-    <main style={{ padding: "24px", maxWidth: "1200px", margin: "0 auto" }}>
-      <StatsBar
-        totalFills={stats.totalFills}
-        totalChallenges={stats.totalChallenges}
-        totalSlashes={stats.totalSlashes}
-        totalSlashedUSDC={stats.totalSlashedUSDC}
-      />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "24px",
-          marginTop: "24px",
-        }}
-      >
-        <section>
-          <h2 style={{ fontSize: "16px", marginBottom: "12px", color: "#aaa" }}>
-            Recent Fills
-          </h2>
-          <FillFeed fills={fills} />
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: "16px", marginBottom: "12px", color: "#aaa" }}>
-            Recent Slashes
-          </h2>
-          <SlashFeed slashes={slashes} />
-        </section>
+    <div className="p-5">
+      {/* Header */}
+      <div className="flex items-end justify-between mb-5">
+        <div>
+          <h1 className="text-2xl font-semibold text-white">Dashboard</h1>
+          <p className="text-[13px] text-[#666] mt-1">Real-time solver fill monitoring and EBBO challenge tracking on Base</p>
+        </div>
+        <button className="text-[13px] text-[#888] bg-[#141414] hover:bg-[#1a1a1a] border border-[#222] px-3 py-1.5 rounded-lg transition-colors">
+          + Add widget
+        </button>
       </div>
-    </main>
+
+      {/* Row 1: Stats + Health Card */}
+      <div className="grid grid-cols-[1fr_280px] gap-4">
+        {/* Left: Stats row */}
+        <StatsCards />
+        {/* Right: Health card */}
+        <IndexerHealth />
+      </div>
+
+      {/* Row 2: Chart + Challenge + Daily Limit */}
+      <div className="grid grid-cols-[1fr_280px] gap-4 mt-4">
+        <FillChart />
+        <div className="flex flex-col gap-4">
+          {/* Challenge Window */}
+          <div className="card p-4">
+            <p className="text-[11px] text-[#666] mb-1">Active challenge window</p>
+            <div className="flex items-end justify-between mb-2">
+              <span className="text-[13px] text-[#888]">$10,000 at risk across 8 fills</span>
+              <span className="text-[13px] text-white font-medium">69%</span>
+            </div>
+            <div className="h-2 rounded-full bg-[#1a1a1a] overflow-hidden">
+              <div className="h-full rounded-full bg-gradient-to-r from-[#a78bfa] to-[#00D4AA] progress-fill" style={{ width: "69%" }} />
+            </div>
+          </div>
+          {/* Recent Fills mini */}
+          <FillFeed />
+        </div>
+      </div>
+
+      {/* Row 3: Leaderboard + Donut + Challenges */}
+      <div className="grid grid-cols-3 gap-4 mt-4">
+        <SolverLeaderboard />
+        <SlashDonut />
+        <ChallengeFeed />
+      </div>
+    </div>
   );
 }
