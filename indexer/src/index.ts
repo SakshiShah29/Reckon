@@ -72,7 +72,7 @@ async function main() {
   // ── Initialize storage batcher (optional) ─────────────────────
   const zgRpcUrl = optional("ZG_RPC_URL");
   const zgIndexerUrl = optional("ZG_INDEXER_URL");
-  const zgPrivateKey = optional("ZG_RELAYER_PRIVATE_KEY");
+  const zgPrivateKey = optional("RELAYER_PRIVATE_KEY");
 
   let batcher: ReturnType<typeof createStorageBatcher> | null = null;
 

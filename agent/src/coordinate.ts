@@ -3,6 +3,7 @@ import { sha512 } from "@noble/hashes/sha512";
 import { keccak256, encodePacked, toHex, toBytes } from "viem";
 import {
   CLAIM_STATE_STREAM_ID,
+  ZG_FLOW_CONTRACT,
   AXL_BACKOFF_SECONDS,
   AXL_DEADLINE_SECONDS,
   AXL_KV_VERIFY_TIMEOUT_MS,
@@ -26,7 +27,6 @@ export interface CoordinateResult {
 export interface CoordinateConfig {
   zgRpcUrl: string;
   zgIndexerUrl: string;
-  zgFlowContract: string;
   zgPrivateKey: string;
   kvNodeUrl?: string;
   axlApiUrl?: string;
@@ -267,7 +267,7 @@ export async function coordinate(
     if (nodeErr) throw nodeErr;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const flowContract = getFlowContract(config.zgFlowContract, signer as any);
+    const flowContract = getFlowContract(ZG_FLOW_CONTRACT, signer as any);
     const batcher = new Batcher(1, nodes, flowContract, config.zgRpcUrl);
 
     const valBytes = encodeClaimValue(agentTokenId, now, claim.deadline);
@@ -359,7 +359,7 @@ async function releaseClaim(
     const [nodes, nodeErr] = await indexer.selectNodes(1);
     if (nodeErr) throw nodeErr;
 
-    const flowContract = getFlowContract(config.zgFlowContract, signer);
+    const flowContract = getFlowContract(ZG_FLOW_CONTRACT, signer);
     const batcher = new Batcher(1, nodes, flowContract, config.zgRpcUrl);
 
     const valBytes = new Uint8Array(96);

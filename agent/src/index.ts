@@ -4,12 +4,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, http, defineChain, type Address } from "viem";
 import { bootAgent, configFromEnv, type BootedAgent } from "./boot.js";
+import { bootstrapChallenger } from "./bootstrap.js";
 import { startFillListener } from "./listener.js";
 import { computeEBBO, isSlashable } from "./ebbo.js";
 import { runSuspicionTriage, generateSlashExplanation } from "./triage.js";
 import { coordinate, type CoordinateConfig } from "./coordinate.js";
 import { decideChallenge } from "./decide.js";
-import { submitChallengeViaKeeperHub } from "./submit.js";
+import { submitChallenge, type SubmitConfig } from "./submit.js";
 import type { FillRecord } from "@reckon-protocol/types";
 import { EBBO_PRECISION } from "@reckon-protocol/types";
 
@@ -25,8 +26,8 @@ const base = defineChain({
 
 const SolverBondVaultABI = [
   {
-    inputs: [{ name: "solverNamehash", type: "bytes32" }],
-    name: "bonds",
+    inputs: [{ name: "node", type: "bytes32" }],
+    name: "bondedAmount",
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
@@ -75,12 +76,13 @@ async function main() {
           axl_ed25519_secret: "0".repeat(64),
           ebbo_threshold_prefs: { minSlash: "1000000", maxBondPct: 50 },
           kh_api_key: process.env["KH_API_KEY"] ?? "kh_dev",
-          model_config: { model: "Qwen3-32B", maxTokens: 512 },
+          model_config: { model: "GLM-5-FP8" },
           performance_history: [],
         },
       };
     } else {
-      console.error("[boot] Fatal: brain blob required. Set HEADLESS_MODE=true to bypass.");
+      console.error("[boot] Fatal:", err instanceof Error ? err.message : err);
+      console.error("[boot] Set HEADLESS_MODE=true to bypass brain blob requirement.");
       process.exit(1);
     }
   }
@@ -107,12 +109,18 @@ async function main() {
   const coordConfig: CoordinateConfig = {
     zgRpcUrl: config.zgRpcUrl,
     zgIndexerUrl: config.zgIndexerUrl,
-    zgFlowContract: process.env["ZG_FLOW_CONTRACT"] ?? "",
     zgPrivateKey: process.env["ZG_AGENT_PRIVATE_KEY"] ?? "",
     kvNodeUrl: process.env["ZG_KV_NODE_URL"],
     axlApiUrl: process.env["AXL_API_URL"],
     axlPeerKeys: process.env["AXL_PEER_KEYS"]?.split(",").filter(Boolean),
     axlPrivateKeyHex: agent.brain.axl_ed25519_secret,
+  };
+
+  // ── Submit config ───────────────────────────────────────────
+  const submitConfig: SubmitConfig = {
+    baseRpcUrl: config.baseRpcUrl,
+    agentPrivateKey: (process.env["ZG_AGENT_PRIVATE_KEY"] ?? "0x") as `0x${string}`,
+    challengerAddress: (process.env["CHALLENGER_ADDRESS"] ?? "0x") as `0x${string}`,
   };
 
   // ── Base client for on-chain reads ─────────────────────────
@@ -121,6 +129,26 @@ async function main() {
     transport: http(config.baseRpcUrl),
   });
   const bondVaultAddress = process.env["SOLVER_BOND_VAULT_ADDRESS"] as Address | undefined;
+
+  // ── Bootstrap: register in ChallengerRegistry if needed ───
+  const relayerUrl = process.env["RELAYER_URL"];
+  const challengerLabel = process.env["CHALLENGER_LABEL"];
+  const challengerRegistryAddress = process.env["CHALLENGER_REGISTRY_ADDRESS"] as Address | undefined;
+
+  if (relayerUrl && challengerLabel && challengerRegistryAddress) {
+    const { privateKeyToAccount } = await import("viem/accounts");
+    const agentAccount = privateKeyToAccount(submitConfig.agentPrivateKey);
+
+    await bootstrapChallenger({
+      publicClient: baseClient,
+      agentAddress: agentAccount.address,
+      challengerRegistryAddress,
+      relayerUrl,
+      challengerLabel,
+    });
+  } else {
+    console.log("[bootstrap] Skipped — set RELAYER_URL, CHALLENGER_LABEL, CHALLENGER_REGISTRY_ADDRESS to enable");
+  }
 
   // ── SKILL.md pipeline: per-fill handler ────────────────────
   async function handleFill(fill: FillRecord) {
@@ -215,7 +243,7 @@ async function main() {
         const bondRaw = await baseClient.readContract({
           address: bondVaultAddress,
           abi: SolverBondVaultABI,
-          functionName: "bonds",
+          functionName: "bondedAmount",
           args: [fill.fillerNamehash],
         });
         solverBond = bondRaw;
@@ -257,23 +285,17 @@ async function main() {
         .catch(() => {});
     }
 
-    // Step 5: submit.ts — KeeperHub webhook
-    const webhookUrl = process.env["KH_WEBHOOK_URL"];
-    if (!webhookUrl) {
-      console.log(`[submit] ${tag} KH_WEBHOOK_URL not set, dry-run complete`);
-      return;
-    }
-
-    console.log(`[submit] ${tag} submitting via KeeperHub...`);
-    const result = await submitChallengeViaKeeperHub(
-      fill.orderHash,
+    // Step 5: submit.ts — direct on-chain challenge
+    console.log(`[submit] ${tag} submitting challenge on-chain...`);
+    const result = await submitChallenge(
+      fill.orderHash as `0x${string}`,
       config.tokenId,
-      agent.brain.kh_api_key,
-      webhookUrl,
+      solverBond,
+      submitConfig,
     );
 
     if (result.success) {
-      console.log(`[submit] ${tag} submitted! RunID: ${result.runId}`);
+      console.log(`[submit] ${tag} challenge submitted! tx: ${result.txHash}`);
     } else {
       console.error(`[submit] ${tag} failed: ${result.error}`);
     }

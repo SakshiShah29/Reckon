@@ -12,8 +12,7 @@ describe("Brain Blob Encryption", () => {
     },
     kh_api_key: "kh_test_key_12345",
     model_config: {
-      model: "Qwen3-32B",
-      maxTokens: 512,
+      model: "GLM-5-FP8",
     },
     performance_history: [],
   };

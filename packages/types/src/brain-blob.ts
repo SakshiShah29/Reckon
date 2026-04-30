@@ -14,8 +14,7 @@ export interface EBBOThresholdPrefs {
 }
 
 export interface ModelConfig {
-  model: "Qwen3-32B" | "Qwen2.5-0.5B-Instruct";
-  maxTokens: number;
+  model: string;
 }
 
 export interface BrainBlob {

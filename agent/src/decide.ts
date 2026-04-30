@@ -41,10 +41,13 @@ export function decideChallenge(
     (solverBondAmount * BigInt(brain.ebbo_threshold_prefs.maxBondPct)) / 100n;
   const bondWithinLimit = challengerBond <= maxBondValue;
 
+  const forceChallenge = process.env["FORCE_CHALLENGE"] === "true";
+
   const shouldChallenge =
-    estimatedSlashAmount >= minSlash &&
+    forceChallenge ||
+    (estimatedSlashAmount >= minSlash &&
     expectedProfit > 0n &&
-    bondWithinLimit;
+    bondWithinLimit);
 
   let reason: string;
   if (!shouldChallenge) {

@@ -99,9 +99,6 @@ export async function bootAgent(config: AgentConfig): Promise<BootedAgent> {
   if (!brain.axl_ed25519_secret || brain.axl_ed25519_secret.length !== 64) {
     throw new Error("Invalid brain blob: axl_ed25519_secret must be 64 hex chars");
   }
-  if (!brain.kh_api_key || !brain.kh_api_key.startsWith("kh_")) {
-    throw new Error("Invalid brain blob: kh_api_key must start with 'kh_'");
-  }
   if (!brain.model_config?.model) {
     throw new Error("Invalid brain blob: model_config.model is required");
   }

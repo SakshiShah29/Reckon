@@ -111,6 +111,21 @@ function geometricMean3(prices: [bigint, bigint, bigint]): bigint {
   return x;
 }
 
+function geometricMean2(a: bigint, b: bigint): bigint {
+  if (a <= 0n || b <= 0n) throw new Error("All prices must be positive");
+  // product of two 1e18 values = 1e36, sqrt gives 1e18
+  const product = a * b;
+  // Newton's method for integer square root
+  let x = 1n << (BigInt(product.toString(2).length) / 2n + 1n);
+  for (let i = 0; i < 256; i++) {
+    const xNew = (x + product / x) / 2n;
+    if (xNew >= x) break;
+    x = xNew;
+  }
+  while (x * x > product) x -= 1n;
+  return x;
+}
+
 export interface EBBOResult {
   /** Benchmark price in 1e18 precision */
   benchmarkPrice: bigint;
@@ -143,7 +158,6 @@ export async function computeEBBO(
     transport: http(rpcUrl),
   });
 
-  // Read current block if not specified
   const block = blockNumber ?? (await client.getBlockNumber());
 
   // Read prices from all canonical pools in parallel
@@ -154,16 +168,32 @@ export async function computeEBBO(
     );
   }
 
-  const poolPrices = await Promise.all(
-    poolAddresses.map((pool) =>
-      readV3PoolPrice(client, pool, tokenIn, block),
-    ),
+  // Read each pool individually — skip pools that revert (e.g. on Anvil forks)
+  const poolResults = await Promise.all(
+    poolAddresses.map(async (pool) => {
+      try {
+        return await readV3PoolPrice(client, pool, tokenIn, block);
+      } catch {
+        try {
+          return await readV3PoolPrice(client, pool, tokenIn);
+        } catch {
+          console.warn(`[ebbo] Pool ${pool.slice(0, 10)}... unreachable, skipping`);
+          return null;
+        }
+      }
+    }),
   );
 
-  // Compute equal-weighted geometric mean
-  const benchmarkPrice = geometricMean3(
-    poolPrices as [bigint, bigint, bigint],
-  );
+  const poolPrices = poolResults.filter((p): p is bigint => p !== null);
+  if (poolPrices.length === 0) {
+    throw new Error("All EBBO pools unreachable");
+  }
+
+  const benchmarkPrice = poolPrices.length === 3
+    ? geometricMean3(poolPrices as [bigint, bigint, bigint])
+    : poolPrices.length === 2
+      ? geometricMean2(poolPrices[0], poolPrices[1])
+      : poolPrices[0];
 
   return {
     benchmarkPrice,

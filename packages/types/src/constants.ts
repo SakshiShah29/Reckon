@@ -17,9 +17,9 @@ export const WETH_BASE = "0x4200000000000000000000000000000000000006" as const;
 // ── EBBO Oracle: top-3 USDC/WETH pools on Base by TVL ──────────
 // These are v3 pools; v4 pool IDs added when confirmed in Phase 0
 export const CANONICAL_POOLS_USDC_WETH: readonly `0x${string}`[] = [
-  "0xd0b53D9277642d899DF5C87A3966A349A798F224", // Uniswap v3 USDC/WETH 0.05%
-  "0x4C36388bE6F416A29C8d8Eee81C771cE6bE14B18", // Uniswap v3 USDC/WETH 0.3%
-  "0x88A43bbDF9D098eEC7bCEda4e2494615dfD9bB9C", // Uniswap v3 USDC/WETH 1%
+  "0x6c561B446416E1A00E8E93E221854d6eA4171372", // Uniswap v3 USDC/WETH Pool A
+  "0xd0b53D9277642d899DF5C87A3966A349A798F224", // Uniswap v3 USDC/WETH Pool B
+  "0x0b1C2DCbBfA744ebD3fC17fF1A96A1E1Eb4B2d69", // Uniswap v3 USDC/WETH Pool C
 ] as const;
 
 // ── EBBO Oracle params ──────────────────────────────────────────
@@ -55,11 +55,10 @@ export const ZG_COMPUTE_LEDGER = "0xE70830508dAc0A97e6c087c75f402f9Be669E406" as
 // ── 0G Storage KV ───────────────────────────────────────────────
 // Single protocol-wide streamId for claim_state
 // Derived: keccak256("reckon/claim_state/v1")
-export const CLAIM_STATE_STREAM_ID = "0x7265636b6f6e2f636c61696d5f73746174652f7631000000000000000000000000" as const;
+export const CLAIM_STATE_STREAM_ID = "0x7265636b6f6e2f636c61696d5f73746174652f76310000000000000000000000" as const;
 
 // ── 0G Compute models ───────────────────────────────────────────
-export const PRIMARY_MODEL = "Qwen3-32B" as const;
-export const FALLBACK_MODEL = "Qwen2.5-0.5B-Instruct" as const;
+export const PRIMARY_MODEL = "GLM-5-FP8" as const;
 
 // ── Fill batching ───────────────────────────────────────────────
 export const FILL_BATCH_SIZE = 50;

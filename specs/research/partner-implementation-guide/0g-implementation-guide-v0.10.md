@@ -41,7 +41,7 @@ ZG_INDEXER_URL=https://indexer-storage-testnet-turbo.0g.ai
 ZG_FLOW_CONTRACT=0x22E03a6A89B950F1c82ec5e74F8eCa321a105296
 ZG_COMPUTE_LEDGER=0xE70830508dAc0A97e6c087c75f402f9Be669E406
 ZG_CHAIN_ID=16602
-ZG_RELAYER_PRIVATE_KEY=0x...   # Builder A — relayer, attestations
+RELAYER_PRIVATE_KEY=0x...      # Single relayer key — used on both Base and 0G Galileo
 ZG_AGENT_PRIVATE_KEY=0x...     # Builder B — agent boot wallet
 ZG_COMPUTE_PROVIDER=0x...      # Inference provider for Qwen3-32B (discovered via listService)
 ```
@@ -175,7 +175,7 @@ import { ZgFile, Indexer } from "@0gfoundation/0g-ts-sdk";
 import { ethers } from "ethers";
 
 const provider = new ethers.JsonRpcProvider(process.env.ZG_RPC_URL);
-const signer   = new ethers.Wallet(process.env.ZG_RELAYER_PRIVATE_KEY!, provider);
+const signer   = new ethers.Wallet(process.env.RELAYER_PRIVATE_KEY!, provider);
 const indexer  = new Indexer(process.env.ZG_INDEXER_URL!);
 
 // Inside the relayer's batch flush loop:
@@ -260,7 +260,7 @@ import { Indexer, Batcher, getFlowContract, KvClient } from "@0gfoundation/0g-ts
 import { ethers } from "ethers";
 
 const provider = new ethers.JsonRpcProvider(process.env.ZG_RPC_URL!);
-const signer   = new ethers.Wallet(process.env.ZG_RELAYER_PRIVATE_KEY!, provider);
+const signer   = new ethers.Wallet(process.env.RELAYER_PRIVATE_KEY!, provider);
 
 // 1. Get StorageNode[] via the indexer's node selection
 const indexer = new Indexer(process.env.ZG_INDEXER_URL!);

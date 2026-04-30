@@ -54,10 +54,11 @@ contract DeployBase is Script {
 
         if (isAnvil) {
             address solverEoa = vm.envAddress("SOLVER");
-            address agentEoa = vm.envAddress("AGENT");
+            address agent_1_Eoa = vm.envAddress("AGENT_1");
+            address agent_2_Eoa = vm.envAddress("AGENT_2");
             uint256 relayerPk = vm.envUint("RELAYER_PK");
             uint256 solverPk = vm.envUint("SOLVER_PK");
-            _seed(solverEoa, agentEoa, relayerPk, solverPk);
+            _seed(solverEoa, agent_1_Eoa, agent_2_Eoa, relayerPk, solverPk);
         }
 
         vm.stopBroadcast();
@@ -110,27 +111,23 @@ contract DeployBase is Script {
         royaltyDistributor.setSolverBondVault(address(solverBondVault));
     }
 
-    function _seed(address solverEoa, address agentEoa, uint256 relayerPk, uint256 solverPk) internal {
-        bytes32 agentNode = keccak256("agent.challengers.reckon.eth");
+    function _seed(address solverEoa, address agent_1_Eoa, address agent_2_Eoa,uint256 relayerPk, uint256 solverPk) internal {
         address relayerEoa = vm.addr(relayerPk);
 
         // Fund ETH via real transfers from deployer (cheatcodes don't persist to anvil)
         (bool s1,) = payable(solverEoa).call{value: 100 ether}("");
-        (bool s2,) = payable(agentEoa).call{value: 100 ether}("");
-        (bool s3,) = payable(relayerEoa).call{value: 100 ether}("");
-        require(s1 && s2 && s3, "ETH transfer failed");
+        (bool s2,) = payable(agent_1_Eoa).call{value: 100 ether}("");
+        (bool s3,) = payable(agent_2_Eoa).call{value: 100 ether}("");
+        (bool s4,) = payable(relayerEoa).call{value: 100 ether}("");
+        require(s1 && s2 && s3 && s4, "ETH transfer failed");
 
         vm.stopBroadcast();
 
-        vm.startBroadcast(relayerPk);
-        challengerRegistry.register(agentNode, agentEoa);
-        ownerRegistry.attestOwner(1, agentEoa);
-        vm.stopBroadcast();
-
-        _logSeedCmds(solverEoa, agentEoa, relayerEoa);
+        _logSeedCmds(solverEoa, agent_1_Eoa, relayerEoa);
 
         vm.startBroadcast();
     }
+    // cast rpc anvil_setStorageAt 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 0x81aadbb3ebe1e5b5a14b6345cc50171b64d76322bd66691f005a571d690a394c 0x000000000000000000000000000000000000000000000000000000174876e800 --rpc-url http://147.182.164.208:8545
 
     function _logSeedCmds(address solverEoa, address agentEoa, address relayerEoa) internal view {
         console.log("");

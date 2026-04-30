@@ -38,7 +38,7 @@
 **Actions:**
 1. Create/verify `.env` with all params from the implementation guide §0:
    - `ZG_RPC_URL`, `ZG_INDEXER_URL`, `ZG_FLOW_CONTRACT`, `ZG_COMPUTE_LEDGER`, `ZG_CHAIN_ID`
-   - `ZG_RELAYER_PRIVATE_KEY`, `ZG_AGENT_PRIVATE_KEY`
+   - `RELAYER_PRIVATE_KEY`, `ZG_AGENT_PRIVATE_KEY`
 2. Fund both wallets via `https://faucet.0g.ai` (or Google Cloud faucet fallback)
 3. Discover Qwen3-32B provider and set `ZG_COMPUTE_PROVIDER`
 
@@ -206,7 +206,7 @@
 **What:** Deploy the ChallengerNFT contract to Galileo testnet using the existing deploy script.
 
 **Actions:**
-1. Run `forge script DeployZGGalileo --rpc-url $ZG_RPC_URL --broadcast --private-key $ZG_RELAYER_PRIVATE_KEY`
+1. Run `forge script DeployZGGalileo --rpc-url $ZG_RPC_URL --broadcast --private-key $RELAYER_PRIVATE_KEY`
 2. Record deployed addresses (MockVerifier, ChallengerNFT impl, ChallengerNFT proxy)
 3. Verify on `chainscan-galileo.0g.ai`
 

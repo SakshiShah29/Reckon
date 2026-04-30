@@ -16,7 +16,7 @@ const base = defineChain({
 });
 
 const FILL_RECORDED_EVENT = parseAbiItem(
-  "event FillRecorded(bytes32 indexed orderHash, bytes32 indexed fillerNamehash, address indexed swapper, uint256 fillBlock)",
+  "event FillRecorded(bytes32 indexed orderHash, bytes32 indexed fillerNamehash, address indexed swapper, uint64 fillBlock)",
 );
 
 export type FillHandler = (fill: FillRecord) => Promise<void>;
@@ -75,16 +75,16 @@ export async function startFillListener(
                 inputs: [{ name: "orderHash", type: "bytes32" }],
                 name: "fills",
                 outputs: [
-                  { name: "filler", type: "address" },
                   { name: "fillerNamehash", type: "bytes32" },
                   { name: "swapper", type: "address" },
                   { name: "tokenIn", type: "address" },
                   { name: "tokenOut", type: "address" },
-                  { name: "inputAmount", type: "uint256" },
-                  { name: "outputAmount", type: "uint256" },
-                  { name: "eboToleranceBps", type: "uint16" },
-                  { name: "fillBlock", type: "uint256" },
-                  { name: "challengeDeadline", type: "uint256" },
+                  { name: "inputAmount", type: "uint128" },
+                  { name: "outputAmount", type: "uint128" },
+                  { name: "eboTolerance", type: "uint16" },
+                  { name: "fillBlock", type: "uint64" },
+                  { name: "challengeDeadline", type: "uint64" },
+                  { name: "slashed", type: "bool" },
                 ],
                 stateMutability: "view",
                 type: "function",
@@ -96,17 +96,17 @@ export async function startFillListener(
 
           const fill: FillRecord = {
             orderHash,
-            filler: fillData[0],
-            fillerNamehash: fillData[1],
-            swapper: fillData[2],
-            tokenIn: fillData[3],
-            tokenOut: fillData[4],
-            inputAmount: fillData[5].toString(),
-            outputAmount: fillData[6].toString(),
-            eboToleranceBps: fillData[7],
-            fillBlock: Number(fillData[8]),
+            filler: "0x0000000000000000000000000000000000000000",
+            fillerNamehash: fillData[0],
+            swapper: fillData[1],
+            tokenIn: fillData[2],
+            tokenOut: fillData[3],
+            inputAmount: fillData[4].toString(),
+            outputAmount: fillData[5].toString(),
+            eboToleranceBps: fillData[6],
+            fillBlock: Number(fillData[7]),
             fillTimestamp: Math.floor(Date.now() / 1000),
-            challengeDeadline: Number(fillData[9]),
+            challengeDeadline: Number(fillData[8]),
             txHash: log.transactionHash!,
           };
 

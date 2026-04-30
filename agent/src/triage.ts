@@ -1,5 +1,5 @@
 import type { FillRecord } from "@reckon-protocol/types";
-import { PRIMARY_MODEL, FALLBACK_MODEL } from "@reckon-protocol/types";
+import { PRIMARY_MODEL } from "@reckon-protocol/types";
 
 interface TriageResult {
   score: number; // 0-1, higher = more suspicious
@@ -40,24 +40,12 @@ export async function runSuspicionTriage(
       defaultHeaders: headers,
     });
 
-    let model: string = PRIMARY_MODEL;
-    let completion;
-    try {
-      completion = await openai.chat.completions.create({
-        model: PRIMARY_MODEL,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 64,
-        temperature: 0.1,
-      });
-    } catch {
-      model = FALLBACK_MODEL;
-      completion = await openai.chat.completions.create({
-        model: FALLBACK_MODEL,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 64,
-        temperature: 0.1,
-      });
-    }
+    const completion = await openai.chat.completions.create({
+      model: PRIMARY_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 64,
+      temperature: 0.1,
+    });
 
     // Settle: pass chatID (completion.id) per 0G docs
     const chatID = completion.id ?? "";
@@ -66,7 +54,7 @@ export async function runSuspicionTriage(
     const rawResponse = completion.choices[0]?.message?.content ?? "";
     const score = parseTriageScore(rawResponse);
 
-    return { score, model, rawResponse };
+    return { score, model: PRIMARY_MODEL, rawResponse };
   } catch (err) {
     // Provider offline or other failure — default to 0.5
     console.warn(
@@ -106,30 +94,18 @@ export async function generateSlashExplanation(
       defaultHeaders: headers,
     });
 
-    let model: string = PRIMARY_MODEL;
-    let completion;
-    try {
-      completion = await openai.chat.completions.create({
-        model: PRIMARY_MODEL,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 256,
-        temperature: 0.3,
-      });
-    } catch {
-      model = FALLBACK_MODEL;
-      completion = await openai.chat.completions.create({
-        model: FALLBACK_MODEL,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 256,
-        temperature: 0.3,
-      });
-    }
+    const completion = await openai.chat.completions.create({
+      model: PRIMARY_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 256,
+      temperature: 0.3,
+    });
 
     const chatID = completion.id ?? "";
     await broker.inference.processResponse(providerAddress, chatID);
 
     const explanation = completion.choices[0]?.message?.content ?? "";
-    return { explanation, model };
+    return { explanation, model: PRIMARY_MODEL };
   } catch {
     // Fallback to template string
     return {
