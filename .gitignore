@@ -50,4 +50,14 @@ node_modules/
 
 # Env / secrets
 .env
-.env.local
+.env.*
+!.env.example
+
+# Multi-agent runtime
+multi-agent/keys/
+multi-agent/logs/
+multi-agent/axl/
+multi-agent/axl-pids.txt
+multi-agent/axl-pubkeys.env
+multi-agent/contracts.env
+multi-agent/provision-data.json
