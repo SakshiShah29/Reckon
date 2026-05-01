@@ -4,6 +4,7 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { createPrivateKey } from "node:crypto";
 import { createPublicClient, createWalletClient, http, defineChain, type Hex } from "viem";
+import { baseSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { sealBrainBlob } from "./encrypt.js";
 import { uploadBrainBlob } from "./upload.js";
@@ -15,6 +16,8 @@ const galileo = defineChain({
   nativeCurrency: { name: "0G", symbol: "OG", decimals: 18 },
   rpcUrls: { default: { http: ["https://evmrpc-testnet.0g.ai"] } },
 });
+
+const DELEGATE_ADDRESS = "0xC204c6FEC66FbFa5467B8080638C939DF9850bf8" as const;
 
 const ChallengerNFTABI = [
   {
@@ -36,6 +39,29 @@ const ChallengerNFTABI = [
   },
 ] as const;
 
+const OwnerRegistryABI = [
+  {
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    name: "ownerOf",
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+const ChallengerABI = [
+  {
+    inputs: [
+      { name: "agentTokenId", type: "uint256" },
+      { name: "delegate", type: "address" },
+    ],
+    name: "setAgentDelegate",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+] as const;
+
 interface ProvisionConfig {
   ownerPrivateKey: Hex;
   agentAddress?: `0x${string}`;
@@ -48,6 +74,10 @@ interface ProvisionConfig {
   minSlashUsdc?: string;
   maxBondPct?: number;
   model?: string;
+  agentPrivateKey?: Hex;
+  challengerAddress?: `0x${string}`;
+  ownerRegistryAddress?: `0x${string}`;
+  baseSepoliaRpcUrl?: string;
 }
 
 function configFromEnv(): ProvisionConfig {
@@ -69,6 +99,10 @@ function configFromEnv(): ProvisionConfig {
     minSlashUsdc: process.env["MIN_SLASH_USDC"] ?? "50000000",
     maxBondPct: Number(process.env["MAX_BOND_PCT"] ?? "25"),
     model: process.env["ZG_MODEL"] ?? "qwen/qwen-2.5-7b-instruct",
+    agentPrivateKey: process.env["AGENT_PRIVATE_KEY"] as Hex | undefined,
+    challengerAddress: process.env["CHALLENGER_ADDRESS"] as `0x${string}` | undefined,
+    ownerRegistryAddress: process.env["OWNER_REGISTRY_ADDRESS"] as `0x${string}` | undefined,
+    baseSepoliaRpcUrl: process.env["BASE_SEPOLIA_RPC"],
   };
 }
 
@@ -248,6 +282,63 @@ export async function provision(config: ProvisionConfig): Promise<{
     : "unknown";
 
   console.log(`\n[provision] Done! ChallengerNFT #${tokenId} minted to ${agentAddress}`);
+
+  // 7. Set delegate on Base Sepolia (polls OwnerRegistry until attestation lands)
+  if (config.agentPrivateKey && config.challengerAddress && config.ownerRegistryAddress && config.baseSepoliaRpcUrl) {
+    console.log(`\n[provision] Step 7: Setting delegate ${DELEGATE_ADDRESS} for token #${tokenId} on Base Sepolia...`);
+
+    const basePublicClient = createPublicClient({
+      chain: baseSepolia,
+      transport: http(config.baseSepoliaRpcUrl),
+    });
+
+    const agentAccount = privateKeyToAccount(config.agentPrivateKey);
+    const baseWalletClient = createWalletClient({
+      account: agentAccount,
+      chain: baseSepolia,
+      transport: http(config.baseSepoliaRpcUrl),
+    });
+
+    console.log(`[provision]   Waiting for OwnerRegistry attestation...`);
+    const maxAttempts = 60;
+    const pollIntervalMs = 5_000;
+    let attested = false;
+    for (let i = 1; i <= maxAttempts; i++) {
+      try {
+        await basePublicClient.readContract({
+          address: config.ownerRegistryAddress,
+          abi: OwnerRegistryABI,
+          functionName: "ownerOf",
+          args: [BigInt(tokenId)],
+        });
+        attested = true;
+        console.log(`[provision]   Attestation found after ${i * pollIntervalMs / 1000}s`);
+        break;
+      } catch {
+        if (i % 6 === 0) console.log(`[provision]   Still waiting... (${i * pollIntervalMs / 1000}s elapsed)`);
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+    }
+
+    if (!attested) {
+      console.warn(`[provision]   Attestation not found after ${maxAttempts * pollIntervalMs / 1000}s — skipping delegation.`);
+      console.warn(`[provision]   Run manually: CHALLENGER=${config.challengerAddress} AGENT_TOKEN_ID=${tokenId} DELEGATE=${DELEGATE_ADDRESS} forge script script/SetDelegate.s.sol --rpc-url $BASE_SEPOLIA_RPC --broadcast --private-key $PRIVATE_KEY`);
+    } else {
+      const delegateTx = await baseWalletClient.writeContract({
+        address: config.challengerAddress,
+        abi: ChallengerABI,
+        functionName: "setAgentDelegate",
+        args: [BigInt(tokenId), DELEGATE_ADDRESS],
+      });
+      const delegateReceipt = await basePublicClient.waitForTransactionReceipt({ hash: delegateTx });
+      if (delegateReceipt.status === "reverted") {
+        console.error(`[provision]   setAgentDelegate reverted: ${delegateTx}`);
+      } else {
+        console.log(`[provision]   Delegate set! Tx: ${delegateTx}`);
+      }
+    }
+  }
+
   console.log(`\n--- Add these to your agent .env ---`);
   console.log(`AGENT_TOKEN_ID=${tokenId}`);
   console.log(`OWNER_SIGNATURE=${ownerSignature}`);

@@ -61,9 +61,11 @@ contract DeployBase is Script {
             address solverEoa = vm.envAddress("SOLVER");
             address agent_1_Eoa = vm.envAddress("AGENT_1");
             address agent_2_Eoa = vm.envAddress("AGENT_2");
-            MockUSDC(usdcAddr).mint(solverEoa, 100e6);
-            MockUSDC(usdcAddr).mint(agent_1_Eoa, 100e6);
-            MockUSDC(usdcAddr).mint(agent_2_Eoa, 100e6);
+            address agent_3_Eoa = vm.envAddress("AGENT_3");
+            MockUSDC(usdcAddr).mint(solverEoa, 1000e6);
+            MockUSDC(usdcAddr).mint(agent_1_Eoa, 1000e6);
+            MockUSDC(usdcAddr).mint(agent_2_Eoa, 1000e6);
+            MockUSDC(usdcAddr).mint(agent_3_Eoa, 1000e6);
         }
 
         if (isAnvil) {
