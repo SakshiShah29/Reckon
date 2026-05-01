@@ -18,6 +18,13 @@ const base = defineChain({
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
 });
 
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
+});
+
 const RegisterABI = [
   {
     inputs: [
@@ -46,6 +53,10 @@ export interface RegistrarConfig {
   relayerPrivateKey: `0x${string}`;
   solverRegistryAddress: Address;
   challengerRegistryAddress: Address;
+  /** Secondary chain RPC + registry addresses for dual-chain registration */
+  secondaryRpcUrl?: string;
+  secondarySolverRegistryAddress?: Address;
+  secondaryChallengerRegistryAddress?: Address;
 }
 
 export interface RegistrationRecord {
@@ -61,32 +72,53 @@ export interface RegistrationRecord {
 const REGISTRATIONS_COLLECTION = "registrations";
 const LABEL_REGEX = /^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$/;
 
-let state: {
+interface ChainClients {
   publicClient: ReturnType<typeof createPublicClient>;
   walletClient: ReturnType<typeof createWalletClient>;
   solverRegistryAddress: Address;
   challengerRegistryAddress: Address;
+}
+
+let state: {
+  primary: ChainClients;
+  secondary: ChainClients | null;
 } | null = null;
 
 export async function initRegistrar(config: RegistrarConfig): Promise<void> {
   const account = privateKeyToAccount(config.relayerPrivateKey);
 
+  const primaryChain = config.secondaryRpcUrl ? baseSepolia : base;
+
   const publicClient = createPublicClient({
-    chain: base,
+    chain: primaryChain,
     transport: http(config.rpcUrl),
   });
 
   const walletClient = createWalletClient({
-    chain: base,
+    chain: primaryChain,
     transport: http(config.rpcUrl),
     account,
   });
 
+  let secondary: ChainClients | null = null;
+  if (config.secondaryRpcUrl && config.secondarySolverRegistryAddress && config.secondaryChallengerRegistryAddress) {
+    secondary = {
+      publicClient: createPublicClient({ chain: base, transport: http(config.secondaryRpcUrl) }),
+      walletClient: createWalletClient({ chain: base, transport: http(config.secondaryRpcUrl), account }),
+      solverRegistryAddress: config.secondarySolverRegistryAddress,
+      challengerRegistryAddress: config.secondaryChallengerRegistryAddress,
+    };
+    console.log("[registrar] Dual-chain: registering on both Sepolia and Anvil fork");
+  }
+
   state = {
-    publicClient,
-    walletClient,
-    solverRegistryAddress: config.solverRegistryAddress,
-    challengerRegistryAddress: config.challengerRegistryAddress,
+    primary: {
+      publicClient,
+      walletClient,
+      solverRegistryAddress: config.solverRegistryAddress,
+      challengerRegistryAddress: config.challengerRegistryAddress,
+    },
+    secondary,
   };
 
   const db = await getDb();
@@ -121,6 +153,45 @@ export async function registerChallenger(
   return register(label, challengerAddress, "challenger");
 }
 
+async function registerOnChain(
+  clients: ChainClients,
+  chainLabel: string,
+  node: Hex,
+  ownerAddress: Address,
+  role: "solver" | "challenger",
+  fullName: string,
+): Promise<Hex> {
+  const registryAddress =
+    role === "solver"
+      ? clients.solverRegistryAddress
+      : clients.challengerRegistryAddress;
+
+  const alreadyRegistered = await clients.publicClient.readContract({
+    address: registryAddress,
+    abi: IsRegisteredABI,
+    functionName: "isRegistered",
+    args: [ownerAddress],
+  });
+
+  if (alreadyRegistered) {
+    console.log(`[registrar] ${chainLabel}: ${ownerAddress} already registered as ${role}`);
+    return "0x" as Hex;
+  }
+
+  console.log(`[registrar] ${chainLabel}: Registering ${role}: ${fullName} → ${ownerAddress}`);
+
+  const txHash = await (clients.walletClient as any).writeContract({
+    address: registryAddress,
+    abi: RegisterABI,
+    functionName: "register",
+    args: [node, ownerAddress],
+  });
+
+  await (clients.publicClient as any).waitForTransactionReceipt({ hash: txHash });
+  console.log(`[registrar] ${chainLabel}: Registered ${fullName}: ${txHash}`);
+  return txHash;
+}
+
 async function register(
   label: string,
   ownerAddress: Address,
@@ -138,33 +209,11 @@ async function register(
   const fullName = `${label}.${parent}`;
   const node = namehash(fullName) as Hex;
 
-  const registryAddress =
-    role === "solver"
-      ? state.solverRegistryAddress
-      : state.challengerRegistryAddress;
+  const txHash = await registerOnChain(state.primary, "primary", node, ownerAddress, role, fullName);
 
-  const alreadyRegistered = await state.publicClient.readContract({
-    address: registryAddress,
-    abi: IsRegisteredABI,
-    functionName: "isRegistered",
-    args: [ownerAddress],
-  });
-
-  if (alreadyRegistered) {
-    throw new Error(`Address ${ownerAddress} is already registered as a ${role}`);
+  if (state.secondary) {
+    await registerOnChain(state.secondary, "secondary", node, ownerAddress, role, fullName);
   }
-
-  console.log(`[registrar] Registering ${role}: ${fullName} → ${ownerAddress}`);
-
-  const txHash = await (state.walletClient as any).writeContract({
-    chain: base,
-    address: registryAddress,
-    abi: RegisterABI,
-    functionName: "register",
-    args: [node, ownerAddress],
-  });
-
-  await (state.publicClient as any).waitForTransactionReceipt({ hash: txHash });
 
   const db = await getDb();
   await db.collection<RegistrationRecord>(REGISTRATIONS_COLLECTION).updateOne(
@@ -182,8 +231,6 @@ async function register(
     },
     { upsert: true },
   );
-
-  console.log(`[registrar] Registered ${fullName}: ${txHash}`);
 
   return { node, label, fullName, txHash };
 }

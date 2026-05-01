@@ -18,6 +18,13 @@ const base = defineChain({
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
 });
 
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
+});
+
 // ── Event ABIs ──────────────────────────────────────────────────
 
 const ChallengeSucceededEvent = parseAbiItem(
@@ -57,10 +64,12 @@ export interface ChallengeListenerConfig {
   recorderRpcUrl: string;
   /** Relayer private key */
   relayerPrivateKey: `0x${string}`;
-  /** Challenger contract address on Base */
+  /** Challenger contract address */
   challengerAddress: Address;
-  /** SolverRegistry address on Base (for setText reputation calls) */
+  /** SolverRegistry address (for setText reputation calls) */
   solverRegistryAddress: Address;
+  /** Use Base Sepolia chain for protocol contracts */
+  useBaseSepolia?: boolean;
 }
 
 /**
@@ -77,14 +86,16 @@ export interface ChallengeListenerConfig {
 export async function startChallengeListener(
   config: ChallengeListenerConfig,
 ): Promise<() => void> {
+  const chain = config.useBaseSepolia ? baseSepolia : base;
+
   const publicClient = createPublicClient({
-    chain: base,
+    chain,
     transport: http(config.rpcUrl),
   });
 
   const account = privateKeyToAccount(config.relayerPrivateKey);
   const walletClient = createWalletClient({
-    chain: base,
+    chain,
     transport: http(config.recorderRpcUrl),
     account,
   });
@@ -239,7 +250,6 @@ async function flushReputation(
 
     // Write to chain
     await walletClient.writeContract({
-      chain: base,
       address: solverRegistryAddress,
       abi: SetTextABI,
       functionName: "setText",

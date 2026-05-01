@@ -35,6 +35,8 @@ import {
   PERMIT2,
   USDC_BASE,
   WETH_BASE,
+  USDC_BASE_SEP,
+  WETH_BASE_SEP,
 } from "@reckon-protocol/types";
 
 // ── Env ────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ function required(key: string): string {
 const SWAPPER_KEY = required("SWAPPER_PRIVATE_KEY") as `0x${string}`;
 const SOLVER_URL = required("SOLVER_URL");
 const BASE_RPC_URL = required("BASE_RPC_URL");
+const BASE_SEPOLIA_RPC_URL = required("BASE_SEPOLIA_RPC_URL");
 const VALIDATOR = required("RECKON_VALIDATOR_ADDRESS") as Address;
 const EBBO_ORACLE = required("EBBO_ORACLE_ADDRESS") as Address;
 
@@ -65,6 +68,7 @@ const badFillPct = isBadFill
 const account = privateKeyToAccount(SWAPPER_KEY);
 const publicClient = createPublicClient({ chain: base, transport: http(BASE_RPC_URL) });
 const walletClient = createWalletClient({ chain: base, transport: http(BASE_RPC_URL), account });
+const baseSepoliaClient = createPublicClient({ chain: base, transport: http(BASE_SEPOLIA_RPC_URL) });
 
 // ── ABIs ───────────────────────────────────────────────────────
 
@@ -338,12 +342,12 @@ async function main() {
   console.log(`Mode: ${isBadFill ? `BAD FILL (${badFillPct}% of benchmark)` : "honest fill"}`);
   console.log();
 
-  // 1. Read benchmark (WETH→USDC price)
-  const benchmark = await publicClient.readContract({
+  // 1. Read benchmark from Base Sepolia EBBOOracle (uses mock token addresses)
+  const benchmark = await baseSepoliaClient.readContract({
     address: EBBO_ORACLE,
     abi: EBBOOracleABI,
     functionName: "computeBenchmark",
-    args: [WETH_BASE, USDC_BASE],
+    args: [WETH_BASE_SEP, USDC_BASE_SEP],
   });
   console.log(`EBBO benchmark: ${benchmark} (price1e18)`);
 

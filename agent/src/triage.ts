@@ -12,32 +12,20 @@ interface SlashExplanation {
   model: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 0G SDK types are loosely typed
-export type ComputeBroker = any;
 
-/**
- * Runs suspicion triage via 0G Compute (Qwen3-32B).
- * Scores a fill 0-1 on suspicion before running expensive EBBO computation.
- *
- * On parse failure → defaults to 0.5 (proceed to deterministic math).
- * On provider offline → defaults to 0.5 (never blocks the pipeline).
- */
+const ZG_ROUTER_BASE_URL = "https://router-api-testnet.integratenetwork.work/v1";
+
 export async function runSuspicionTriage(
   fill: FillRecord,
-  providerAddress: string,
-  broker: ComputeBroker,
+  apiKey: string,
 ): Promise<TriageResult> {
   const prompt = buildTriagePrompt(fill);
 
   try {
-    const meta = await broker.inference.getServiceMetadata(providerAddress);
-    const headers = await broker.inference.getRequestHeaders(providerAddress);
-
     const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({
-      apiKey: "placeholder", // required by SDK but unused — 0G broker headers carry auth
-      baseURL: `${meta.endpoint}/chat/completions`,
-      defaultHeaders: headers,
+      apiKey,
+      baseURL: ZG_ROUTER_BASE_URL,
     });
 
     const completion = await openai.chat.completions.create({
@@ -47,16 +35,11 @@ export async function runSuspicionTriage(
       temperature: 0.1,
     });
 
-    // Settle: pass chatID (completion.id) per 0G docs
-    const chatID = completion.id ?? "";
-    await broker.inference.processResponse(providerAddress, chatID);
-
     const rawResponse = completion.choices[0]?.message?.content ?? "";
     const score = parseTriageScore(rawResponse);
 
     return { score, model: PRIMARY_MODEL, rawResponse };
   } catch (err) {
-    // Provider offline or other failure — default to 0.5
     console.warn(
       `[triage] 0G Compute unavailable, defaulting to 0.5: ${err instanceof Error ? err.message : err}`,
     );
@@ -64,17 +47,12 @@ export async function runSuspicionTriage(
   }
 }
 
-/**
- * Generates a natural-language explanation for a successful slash.
- * Purely cosmetic — never blocks the slash itself.
- */
 export async function generateSlashExplanation(
   fill: FillRecord,
   benchmarkPrice: string,
   actualPrice: string,
   shortfallPct: string,
-  providerAddress: string,
-  broker: ComputeBroker,
+  apiKey: string,
 ): Promise<SlashExplanation> {
   const prompt = buildExplanationPrompt(
     fill,
@@ -84,14 +62,10 @@ export async function generateSlashExplanation(
   );
 
   try {
-    const meta = await broker.inference.getServiceMetadata(providerAddress);
-    const headers = await broker.inference.getRequestHeaders(providerAddress);
-
     const { default: OpenAI } = await import("openai");
     const openai = new OpenAI({
-      apiKey: "placeholder", // required by SDK but unused — 0G broker headers carry auth
-      baseURL: `${meta.endpoint}/chat/completions`,
-      defaultHeaders: headers,
+      apiKey,
+      baseURL: ZG_ROUTER_BASE_URL,
     });
 
     const completion = await openai.chat.completions.create({
@@ -101,13 +75,9 @@ export async function generateSlashExplanation(
       temperature: 0.3,
     });
 
-    const chatID = completion.id ?? "";
-    await broker.inference.processResponse(providerAddress, chatID);
-
     const explanation = completion.choices[0]?.message?.content ?? "";
     return { explanation, model: PRIMARY_MODEL };
   } catch {
-    // Fallback to template string
     return {
       explanation: buildTemplateExplanation(
         fill,
@@ -165,10 +135,6 @@ function buildTemplateExplanation(
   return `Solver ${fill.fillerNamehash} was slashed because the EBBO benchmark of ${benchmarkPrice} exceeded their fill price of ${actualPrice} by ${shortfallPct}%, beyond the swapper's ${fill.eboToleranceBps / 100}% tolerance.`;
 }
 
-/**
- * Parse triage score from LLM response.
- * Regex: first line, a number 0-1. On failure, default to 0.5.
- */
 function parseTriageScore(raw: string): number {
   const match = raw.match(/^\s*([01](?:\.\d+)?)/m);
   if (!match) return 0.5;

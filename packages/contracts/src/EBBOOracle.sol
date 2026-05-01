@@ -142,7 +142,6 @@ contract EBBOOracle is Ownable {
     function computeBenchmark(address tokenIn, address tokenOut) external view returns (uint256 price1e18) {
         bytes32 key = pairKey(tokenIn, tokenOut);
         PoolRef[] storage pools = _poolsForPair[key];
-        if (pools.length < 3) revert ReckonErrors.InsufficientPools();
 
         uint256[] memory prices = new uint256[](pools.length);
         for (uint256 i; i < pools.length; ++i) {

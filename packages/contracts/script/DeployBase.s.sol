@@ -17,14 +17,16 @@ import {Challenger} from "../src/Challenger.sol";
 import {IReckonRegistrar} from "../src/interfaces/IReckonRegistrar.sol";
 import {IReckonNamehashLookup} from "../src/interfaces/IReckonNamehashLookup.sol";
 import {Addresses} from "../src/lib/Addresses.sol";
+import {MockUSDC} from "../test/mocks/MockUSDC.sol";
 
 contract DeployBase is Script {
     // Canonical Base addresses
-    address constant USDC = Addresses.USDC_BASE;
+    address constant USDC = Addresses.USDC_BASE_SEP;
+    address constant WETH = Addresses.WETH_BASE_SEP;
     address constant PERMIT2 = Addresses.PERMIT2;
 
     // Canonical USDC/WETH v3 pools on Base
-    address constant POOL_A = 0x6c561B446416E1A00E8E93E221854d6eA4171372;
+    address constant POOL_A = 0x7400b6F821615f89Cf6C825a6E024ed3F2c8C157;
     address constant POOL_B = 0xd0b53D9277642d899DF5C87A3966A349A798F224;
     address constant POOL_C = 0x0b1C2DCbBfA744ebD3fC17fF1A96A1E1Eb4B2d69;
 
@@ -41,6 +43,7 @@ contract DeployBase is Script {
 
     function run() external {
         bool isAnvil = vm.envOr("ANVIL", false);
+        bool isTestnet = vm.envOr("TESTNET", false);
 
         address deployer = msg.sender;
         address owner = vm.envOr("OWNER", deployer);
@@ -49,8 +52,19 @@ contract DeployBase is Script {
 
         vm.startBroadcast();
 
-        _deploy(owner, relayer, treasury);
+        address usdcAddr = USDC;
+
+        _deploy(owner, relayer, treasury, usdcAddr);
         _wire();
+
+        if (isTestnet) {
+            address solverEoa = vm.envAddress("SOLVER");
+            address agent_1_Eoa = vm.envAddress("AGENT_1");
+            address agent_2_Eoa = vm.envAddress("AGENT_2");
+            MockUSDC(usdcAddr).mint(solverEoa, 100e6);
+            MockUSDC(usdcAddr).mint(agent_1_Eoa, 100e6);
+            MockUSDC(usdcAddr).mint(agent_2_Eoa, 100e6);
+        }
 
         if (isAnvil) {
             address solverEoa = vm.envAddress("SOLVER");
@@ -69,22 +83,21 @@ contract DeployBase is Script {
     function _deploy(
         address owner,
         address relayer,
-        address treasury
+        address treasury,
+        address usdcAddr
     ) internal {
         ownerRegistry = new OwnerRegistry(owner, relayer);
         solverRegistry = new SolverRegistry(owner, relayer);
         challengerRegistry = new ChallengerRegistry(owner, relayer);
-        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](3);
+        EBBOOracle.PoolRef[] memory pools = new EBBOOracle.PoolRef[](1);
         pools[0] = EBBOOracle.PoolRef({pool: POOL_A});
-        pools[1] = EBBOOracle.PoolRef({pool: POOL_B});
-        pools[2] = EBBOOracle.PoolRef({pool: POOL_C});
-        ebboOracle = new EBBOOracle(owner, USDC, Addresses.WETH_BASE, pools);
+        ebboOracle = new EBBOOracle(owner, usdcAddr, Addresses.WETH_BASE_SEP, pools);
 
-        solverBondVault = new SolverBondVault(owner, IERC20(USDC), IReckonRegistrar(address(solverRegistry)));
+        solverBondVault = new SolverBondVault(owner, IERC20(usdcAddr), IReckonRegistrar(address(solverRegistry)));
         fillRegistry = new FillRegistry(owner, IReckonRegistrar(address(solverRegistry)), solverBondVault, relayer);
 
         royaltyDistributor = new RoyaltyDistributor(
-            owner, IERC20(USDC), ownerRegistry, fillRegistry, treasury
+            owner, IERC20(usdcAddr), ownerRegistry, fillRegistry, treasury
         );
 
         reckonValidator = new ReckonValidator(IReckonRegistrar(address(solverRegistry)));
@@ -98,7 +111,7 @@ contract DeployBase is Script {
             IReckonRegistrar(address(solverRegistry)),
             IReckonNamehashLookup(address(challengerRegistry)),
             ISignatureTransfer(PERMIT2),
-            IERC20(USDC),
+            IERC20(usdcAddr),
             treasury
         );
     }

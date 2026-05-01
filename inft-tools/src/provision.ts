@@ -68,7 +68,7 @@ function configFromEnv(): ProvisionConfig {
     khApiKey: process.env["KH_API_KEY"] ?? "",
     minSlashUsdc: process.env["MIN_SLASH_USDC"] ?? "50000000",
     maxBondPct: Number(process.env["MAX_BOND_PCT"] ?? "25"),
-    model: process.env["ZG_MODEL"] ?? "GLM-5-FP8",
+    model: process.env["ZG_MODEL"] ?? "qwen/qwen-2.5-7b-instruct",
   };
 }
 
@@ -109,7 +109,7 @@ export async function provision(config: ProvisionConfig): Promise<{
   console.log(`[provision]   Public key: ${axlPublicKey}`);
 
   // 2. Discover 0G Compute provider
-  console.log(`[provision] Step 2/6: Discovering 0G Compute provider for ${config.model ?? "GLM-5-FP8"}...`);
+  console.log(`[provision] Step 2/6: Discovering 0G Compute provider for ${config.model ?? "qwen/qwen-2.5-7b-instruct"}...`);
   let computeProviderAddress = "";
   try {
     const inferenceAddress = "0xa79F4c8311FF93C06b8CfB403690cc987c93F91E" as const;
@@ -154,7 +154,7 @@ export async function provision(config: ProvisionConfig): Promise<{
       args: [0n, 1000n],
     });
 
-    const targetModel = config.model ?? "GLM-5-FP8";
+    const targetModel = "qwen/qwen-2.5-7b-instruct";
     const matchingProviders = allServices.filter(
       (s) => s.model === targetModel,
     );
@@ -163,7 +163,7 @@ export async function provision(config: ProvisionConfig): Promise<{
       computeProviderAddress = matchingProviders[0].provider;
       console.log(`[provision]   Found ${matchingProviders.length} provider(s), using: ${computeProviderAddress}`);
     } else {
-      console.warn(`[provision]   No providers found for ${config.model ?? "GLM-5-FP8"}`);
+      console.warn(`[provision]   No providers found for "qwen/qwen-2.5-7b-instruct"}`);
     }
   } catch {
     console.warn(`[provision]   On-chain provider discovery failed — find one at https://compute-marketplace.0g.ai/inference`);
@@ -185,7 +185,7 @@ export async function provision(config: ProvisionConfig): Promise<{
     },
     kh_api_key: config.khApiKey,
     model_config: {
-      model: config.model ?? "GLM-5-FP8",
+      model: config.model ?? "qwen/qwen-2.5-7b-instruct",
     },
     performance_history: [],
   };

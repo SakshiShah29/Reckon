@@ -17,7 +17,8 @@ function optional(key: string): string | undefined {
 }
 
 const solverPrivateKey = required("SOLVER_PRIVATE_KEY") as `0x${string}`;
-const baseRpcUrl = required("BASE_RPC_URL");
+const baseRpcUrl = required("BASE_RPC_URL"); // Anvil fork — fill execution
+const baseSepoliaRpcUrl = optional("BASE_SEPOLIA_RPC_URL"); // Base Sepolia — bonds + registration
 const reckonValidatorAddress = required("RECKON_VALIDATOR_ADDRESS") as Address;
 const port = parseInt(process.env["PORT"] ?? "3000", 10);
 
@@ -29,10 +30,26 @@ const relayerUrl = optional("RELAYER_URL");
 const solverLabel = optional("SOLVER_LABEL");
 
 if (solverBondVaultAddress && relayerUrl && solverLabel) {
-  const fillerState = getFillerState();
+  // Bootstrap uses Base Sepolia for bonds if available, otherwise Anvil
+  const bootstrapRpcUrl = baseSepoliaRpcUrl ?? baseRpcUrl;
+  const { createPublicClient, createWalletClient, http, defineChain } = await import("viem");
+  const { privateKeyToAccount } = await import("viem/accounts");
+
+  const bootstrapChain = baseSepoliaRpcUrl
+    ? defineChain({ id: 84532, name: "Base Sepolia", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: ["https://sepolia.base.org"] } } })
+    : (await import("viem/chains")).base;
+
+  const bootstrapAccount = privateKeyToAccount(solverPrivateKey);
+  const bootstrapPublicClient = createPublicClient({ chain: bootstrapChain, transport: http(bootstrapRpcUrl) });
+  const bootstrapWalletClient = createWalletClient({ chain: bootstrapChain, transport: http(bootstrapRpcUrl), account: bootstrapAccount });
+
+  if (baseSepoliaRpcUrl) {
+    console.log("[solver] Dual-chain: fills on Anvil fork, bonds on Base Sepolia");
+  }
+
   bootstrapSolver({
-    publicClient: fillerState.publicClient,
-    walletClient: fillerState.walletClient,
+    publicClient: bootstrapPublicClient,
+    walletClient: bootstrapWalletClient,
     solverAddress,
     solverBondVaultAddress,
     relayerUrl,

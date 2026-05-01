@@ -6,14 +6,16 @@ import {
   parseAbiItem,
 } from "viem";
 import type { FillRecord } from "@reckon-protocol/types";
-import { CHALLENGE_WINDOW_BLOCKS } from "@reckon-protocol/types";
+import { CHALLENGE_WINDOW_BLOCKS, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
 
-const base = defineChain({
-  id: 8453,
-  name: "Base",
+const baseSepolia = defineChain({
+  id: BASE_SEPOLIA_CHAIN_ID,
+  name: "Base Sepolia",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
 });
+
+const MAX_BLOCK_RANGE = 9n;
 
 const FILL_RECORDED_EVENT = parseAbiItem(
   "event FillRecorded(bytes32 indexed orderHash, bytes32 indexed fillerNamehash, address indexed swapper, uint64 fillBlock)",
@@ -33,7 +35,7 @@ export async function startFillListener(
   handler: FillHandler,
 ): Promise<() => void> {
   const client = createPublicClient({
-    chain: base,
+    chain: baseSepolia,
     transport: http(rpcUrl),
   });
 
@@ -54,11 +56,14 @@ export async function startFillListener(
           continue;
         }
 
+        const from = lastProcessedBlock + 1n;
+        const to = currentBlock - from > MAX_BLOCK_RANGE ? from + MAX_BLOCK_RANGE : currentBlock;
+
         const logs = await client.getLogs({
           address: fillRegistryAddress,
           event: FILL_RECORDED_EVENT,
-          fromBlock: lastProcessedBlock + 1n,
-          toBlock: currentBlock,
+          fromBlock: from,
+          toBlock: to,
         });
 
         for (const log of logs) {
@@ -132,7 +137,7 @@ export async function startFillListener(
           }
         }
 
-        lastProcessedBlock = currentBlock;
+        lastProcessedBlock = to;
       } catch (err) {
         console.error("[listener] Poll error:", err);
       }

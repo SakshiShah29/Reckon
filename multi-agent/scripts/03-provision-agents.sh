@@ -55,7 +55,7 @@ AGENT_ADDRESS=$AGENT2_ADDRESS
 AGENT_CHALLENGE_STRING=reckon-agent-auth-v1
 MIN_SLASH_USDC=500000
 MAX_BOND_PCT=90
-ZG_MODEL=GLM-5-FP8
+ZG_MODEL=qwen/qwen-2.5-7b-instruct
 EOF
 
 echo "[provision] Running provision for Agent 2..."
@@ -76,7 +76,7 @@ AGENT_ADDRESS=$AGENT3_ADDRESS
 AGENT_CHALLENGE_STRING=reckon-agent-auth-v1
 MIN_SLASH_USDC=500000
 MAX_BOND_PCT=90
-ZG_MODEL=GLM-5-FP8
+ZG_MODEL=qwen/qwen-2.5-7b-instruct
 EOF
 
 echo "[provision] Running provision for Agent 3..."

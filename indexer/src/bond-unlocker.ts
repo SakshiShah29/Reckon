@@ -15,6 +15,13 @@ const base = defineChain({
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
 });
 
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
+});
+
 /**
  * ABI for FillRegistry.finalizeFill() — unlocks the solver's bond after
  * the challenge window expires without a challenge.
@@ -34,8 +41,10 @@ export interface BondUnlockerConfig {
   rpcUrl: string;
   /** Relayer private key (recorder EOA) */
   relayerPrivateKey: `0x${string}`;
-  /** FillRegistry address on Base */
+  /** FillRegistry address */
   fillRegistryAddress: Address;
+  /** Use Base Sepolia chain for protocol contracts */
+  useBaseSepolia?: boolean;
 }
 
 /**
@@ -55,14 +64,16 @@ export interface BondUnlockerConfig {
 export async function startBondUnlocker(
   config: BondUnlockerConfig,
 ): Promise<() => void> {
+  const chain = config.useBaseSepolia ? baseSepolia : base;
+
   const publicClient = createPublicClient({
-    chain: base,
+    chain,
     transport: http(config.rpcUrl),
   });
 
   const account = privateKeyToAccount(config.relayerPrivateKey);
   const walletClient = createWalletClient({
-    chain: base,
+    chain,
     transport: http(config.rpcUrl),
     account,
   });
@@ -96,7 +107,6 @@ export async function startBondUnlocker(
           const tag = fill.orderHash.slice(0, 10);
           try {
             const txHash = await walletClient.writeContract({
-              chain: base,
               address: config.fillRegistryAddress,
               abi: FinalizeFillABI,
               functionName: "finalizeFill",

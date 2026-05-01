@@ -11,13 +11,13 @@ import {
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { PERMIT2, USDC_BASE, CHALLENGER_BOND_PCT } from "@reckon-protocol/types";
+import { PERMIT2, USDC_BASE_SEP, CHALLENGER_BOND_PCT, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
 
-const base = defineChain({
-  id: 8453,
-  name: "Base",
+const baseSepolia = defineChain({
+  id: BASE_SEPOLIA_CHAIN_ID,
+  name: "Base Sepolia",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
 });
 
 const ChallengerABI = [
@@ -118,13 +118,13 @@ export async function submitChallenge(
     const account = privateKeyToAccount(config.agentPrivateKey);
 
     const publicClient = createPublicClient({
-      chain: base,
+      chain: baseSepolia,
       transport: http(config.baseRpcUrl),
     });
 
     const walletClient = createWalletClient({
       account,
-      chain: base,
+      chain: baseSepolia,
       transport: http(config.baseRpcUrl),
     });
 
@@ -132,7 +132,7 @@ export async function submitChallenge(
 
     // Ensure USDC allowance to Permit2
     const allowance = await publicClient.readContract({
-      address: USDC_BASE,
+      address: USDC_BASE_SEP,
       abi: ERC20ApproveABI,
       functionName: "allowance",
       args: [account.address, PERMIT2],
@@ -141,12 +141,12 @@ export async function submitChallenge(
     if (allowance < challengerBond) {
       console.log(`[submit] Approving USDC to Permit2...`);
       const approveTx = await walletClient.writeContract({
-        address: USDC_BASE,
+        address: USDC_BASE_SEP,
         abi: ERC20ApproveABI,
         functionName: "approve",
         args: [PERMIT2, 2n ** 256n - 1n],
       });
-      await publicClient.waitForTransactionReceipt({ hash: approveTx });
+      await publicClient.waitForTransactionReceipt({ hash: approveTx, confirmations: 2 });
       console.log(`[submit] Permit2 approved: ${approveTx}`);
     }
 
@@ -155,7 +155,7 @@ export async function submitChallenge(
 
     const permit = {
       permitted: {
-        token: USDC_BASE as Address,
+        token: USDC_BASE_SEP as Address,
         amount: challengerBond,
       },
       nonce,
@@ -166,7 +166,7 @@ export async function submitChallenge(
     const tokenPermHash = keccak256(
       encodeAbiParameters(
         [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }],
-        [TOKEN_PERMISSIONS_TYPEHASH, USDC_BASE, challengerBond],
+        [TOKEN_PERMISSIONS_TYPEHASH, USDC_BASE_SEP, challengerBond],
       ),
     );
 
@@ -189,7 +189,7 @@ export async function submitChallenge(
       ),
     );
 
-    const domainSep = permit2DomainSeparator(base.id);
+    const domainSep = permit2DomainSeparator(baseSepolia.id);
     const digest = keccak256(concat(["0x1901", domainSep, structHash]));
     const signature = await account.sign({ hash: digest });
 

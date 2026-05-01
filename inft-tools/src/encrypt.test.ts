@@ -12,7 +12,7 @@ describe("Brain Blob Encryption", () => {
     },
     kh_api_key: "kh_test_key_12345",
     model_config: {
-      model: "GLM-5-FP8",
+      model: "qwen/qwen-2.5-7b-instruct",
     },
     performance_history: [],
   };

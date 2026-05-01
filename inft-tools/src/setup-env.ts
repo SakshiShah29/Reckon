@@ -30,7 +30,6 @@ interface SetupConfig {
   zgRpcUrl: string;
   axlPemPath: string;
   challengeString: string;
-  model?: string;
 }
 
 function configFromEnv(): SetupConfig {
@@ -47,7 +46,6 @@ function configFromEnv(): SetupConfig {
     zgRpcUrl: required("ZG_RPC_URL"),
     axlPemPath: required("AXL_PEM_PATH"),
     challengeString: process.env["AGENT_CHALLENGE_STRING"] ?? "reckon-agent-auth-v1",
-    model: process.env["ZG_MODEL"] ?? "GLM-5-FP8",
   };
 }
 
@@ -97,70 +95,12 @@ async function setupEnv(config: SetupConfig) {
     message: config.challengeString,
   });
 
-  // 4. Discover compute provider
-  console.log(`[setup-env] Discovering 0G Compute provider for ${config.model}...`);
-  let computeProviderAddress = "";
-  try {
-    const inferenceAddress = "0xa79F4c8311FF93C06b8CfB403690cc987c93F91E" as const;
-    const GetAllServicesABI = [{
-      inputs: [
-        { name: "offset", type: "uint256" },
-        { name: "limit", type: "uint256" },
-      ],
-      name: "getAllServices",
-      outputs: [
-        {
-          name: "services",
-          type: "tuple[]",
-          components: [
-            { name: "provider", type: "address" },
-            { name: "serviceType", type: "string" },
-            { name: "url", type: "string" },
-            { name: "inputPrice", type: "uint256" },
-            { name: "outputPrice", type: "uint256" },
-            { name: "updatedAt", type: "uint256" },
-            { name: "model", type: "string" },
-            { name: "verifiability", type: "string" },
-            { name: "additionalInfo", type: "string" },
-            { name: "teeSignerAddress", type: "address" },
-            { name: "teeSignerAcknowledged", type: "bool" },
-          ],
-        },
-        { name: "total", type: "uint256" },
-      ],
-      stateMutability: "view",
-      type: "function",
-    }] as const;
-
-    const [allServices] = await publicClient.readContract({
-      address: inferenceAddress,
-      abi: GetAllServicesABI,
-      functionName: "getAllServices",
-      args: [0n, 1000n],
-    });
-
-    const matchingProviders = allServices.filter(
-      (s) => s.model === config.model,
-    );
-
-    if (matchingProviders.length > 0) {
-      computeProviderAddress = matchingProviders[0].provider;
-      console.log(`[setup-env]   Found ${matchingProviders.length} provider(s), using: ${computeProviderAddress}`);
-    } else {
-      console.warn(`[setup-env]   No providers found for ${config.model}`);
-    }
-  } catch {
-    console.warn(`[setup-env]   On-chain provider discovery failed — find one at https://compute-marketplace.0g.ai/inference`);
-  }
-
   // Output
   console.log(`\n--- Add these to your agent .env ---`);
   console.log(`AGENT_TOKEN_ID=${config.tokenId}`);
   console.log(`OWNER_SIGNATURE=${ownerSignature}`);
   console.log(`BRAIN_ROOT_HASH=${rootHash}`);
-  if (computeProviderAddress) {
-    console.log(`ZG_COMPUTE_PROVIDER_ADDRESS=${computeProviderAddress}`);
-  }
+  console.log(`ZG_API_KEY=sk-...              # Get from pc.0g.ai`);
   console.log(`\n--- AXL node config ---`);
   console.log(`AXL_PEM_PATH=${config.axlPemPath}`);
   console.log(`AXL_ED25519_PUBLIC_KEY=${axlPublicKey}`);

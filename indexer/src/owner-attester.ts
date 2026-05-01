@@ -27,6 +27,13 @@ const base = defineChain({
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
 });
 
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
+});
+
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
 );
@@ -59,6 +66,8 @@ export interface AttesterConfig {
   challengerNftAddress: Address;
   /** OwnerRegistry contract address on Base */
   ownerRegistryAddress: Address;
+  /** Use Base Sepolia chain for OwnerRegistry */
+  useBaseSepolia?: boolean;
 }
 
 /**
@@ -79,7 +88,7 @@ export async function startOwnerAttester(
   const account = privateKeyToAccount(config.relayerPrivateKey);
 
   const baseWalletClient = createWalletClient({
-    chain: base,
+    chain: config.useBaseSepolia ? baseSepolia : base,
     transport: http(config.baseRpcUrl),
     account,
   });

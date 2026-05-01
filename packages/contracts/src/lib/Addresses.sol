@@ -18,4 +18,8 @@ library Addresses {
     // ERC-20 anchors on Base
     address internal constant USDC_BASE = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address internal constant WETH_BASE = 0x4200000000000000000000000000000000000006;
+
+    // ERC-20 anchors on Base-Sepolia
+    address internal constant USDC_BASE_SEP = 0x868D2ea6D9885e3909Ab82a9B5AC1EE02D50CF93;
+    address internal constant WETH_BASE_SEP = 0xb8d5d470fFc5d08Cf3B0Be5F6bce8dFf54cC84d8;
 }

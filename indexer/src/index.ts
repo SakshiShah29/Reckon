@@ -10,12 +10,20 @@ import { startChallengeListener } from "./challenge-listener.js";
 import { createStorageBatcher, type BatcherConfig } from "./storage-batcher.js";
 import { closeDb } from "./db.js";
 import { initRegistrar, registerSolver, registerChallenger } from "./registrar.js";
+import { USDC_BASE, WETH_BASE, USDC_BASE_SEP, WETH_BASE_SEP } from "@reckon-protocol/types";
 
 const base = defineChain({
   id: 8453,
   name: "Base",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+});
+
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
 });
 
 // ── Environment ─────────────────────────────────────────────────
@@ -44,10 +52,15 @@ async function main() {
   console.log("=== Reckon Indexer/Relayer ===");
   console.log();
 
-  const baseRpcUrl = required("BASE_RPC_URL");
-  const recorderRpcUrl = optional("RECORDER_RPC_URL") ?? baseRpcUrl; // separate RPC for writing (e.g. Anvil)
+  const baseRpcUrl = required("BASE_RPC_URL"); // Anvil fork — swap events
+  const baseSepoliaRpcUrl = optional("BASE_SEPOLIA_RPC_URL"); // Base Sepolia — protocol contracts
+  const recorderRpcUrl = baseSepoliaRpcUrl ?? optional("RECORDER_RPC_URL") ?? baseRpcUrl;
   const relayerPrivateKey = required("RELAYER_PRIVATE_KEY") as `0x${string}`;
   const defaultToleranceBps = parseInt(optional("DEFAULT_TOLERANCE_BPS") ?? "50", 10);
+
+  if (baseSepoliaRpcUrl) {
+    console.log("[indexer] Dual-chain mode: listening on Anvil fork, recording on Base Sepolia");
+  }
 
   // On-chain recording is optional — omit FILL_REGISTRY_ADDRESS to run in listen-only mode
   const fillRegistryAddress = optional("FILL_REGISTRY_ADDRESS") as Address | undefined;
@@ -60,6 +73,13 @@ async function main() {
     fillRegistryAddress: fillRegistryAddress ?? "0x0000000000000000000000000000000000000000",
     solverRegistryAddress: solverRegistryAddress ?? "0x0000000000000000000000000000000000000000",
     defaultToleranceBps,
+    fillSourceRpcUrl: baseSepoliaRpcUrl ? baseRpcUrl : undefined,
+    tokenAddressMap: baseSepoliaRpcUrl
+      ? {
+          [USDC_BASE.toLowerCase()]: USDC_BASE_SEP,
+          [WETH_BASE.toLowerCase()]: WETH_BASE_SEP,
+        }
+      : undefined,
   });
 
   if (!fillRegistryAddress) {
@@ -80,7 +100,7 @@ async function main() {
     // Build a wallet client for anchorBatch calls (reuses the same relayer key)
     const batcherWallet = fillRegistryAddress
       ? createWalletClient({
-          chain: base,
+          chain: baseSepoliaRpcUrl ? baseSepolia : base,
           transport: http(recorderRpcUrl),
           account: privateKeyToAccount(relayerPrivateKey),
         })
@@ -118,10 +138,11 @@ async function main() {
   if (challengerNftAddress && ownerRegistryAddress && zgRpcUrl) {
     stopOwnerAttester = await startOwnerAttester({
       galileoRpcUrl: zgRpcUrl,
-      baseRpcUrl,
+      baseRpcUrl: baseSepoliaRpcUrl ?? baseRpcUrl,
       relayerPrivateKey,
       challengerNftAddress,
       ownerRegistryAddress,
+      useBaseSepolia: !!baseSepoliaRpcUrl,
     });
   } else {
     console.log("[indexer] Owner attester disabled — CHALLENGER_NFT_ADDRESS or OWNER_REGISTRY_ADDRESS not set");
@@ -135,6 +156,7 @@ async function main() {
       rpcUrl: recorderRpcUrl,
       relayerPrivateKey,
       fillRegistryAddress,
+      useBaseSepolia: !!baseSepoliaRpcUrl,
     });
   } else {
     console.log("[indexer] Bond unlocker disabled — no FILL_REGISTRY_ADDRESS");
@@ -152,6 +174,7 @@ async function main() {
       relayerPrivateKey,
       challengerAddress: challengerContractAddress,
       solverRegistryAddress,
+      useBaseSepolia: !!baseSepoliaRpcUrl,
     });
   } else {
     console.log("[indexer] Challenge listener disabled — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
@@ -160,12 +183,18 @@ async function main() {
   // ── Initialize registrar (needs both registries) ──────────────
   const challengerRegistryAddress = optional("CHALLENGER_REGISTRY_ADDRESS") as Address | undefined;
 
+  const anvilSolverRegistryAddress = optional("ANVIL_SOLVER_REGISTRY_ADDRESS") as Address | undefined;
+  const anvilChallengerRegistryAddress = optional("ANVIL_CHALLENGER_REGISTRY_ADDRESS") as Address | undefined;
+
   if (solverRegistryAddress && challengerRegistryAddress) {
     await initRegistrar({
       rpcUrl: recorderRpcUrl,
       relayerPrivateKey,
       solverRegistryAddress,
       challengerRegistryAddress,
+      secondaryRpcUrl: baseSepoliaRpcUrl ? baseRpcUrl : undefined,
+      secondarySolverRegistryAddress: anvilSolverRegistryAddress,
+      secondaryChallengerRegistryAddress: anvilChallengerRegistryAddress,
     });
   } else {
     console.log("[indexer] Registrar disabled — SOLVER_REGISTRY_ADDRESS or CHALLENGER_REGISTRY_ADDRESS not set");

@@ -31,8 +31,6 @@ export interface AgentConfig {
   baseRpcUrl: string;
   /** 0G RPC URL */
   zgRpcUrl: string;
-  /** 0G Compute provider address */
-  zgComputeProviderAddress: string;
   /** Brain blob root hash (from iNFT tokenURI) — if known, skips on-chain read */
   brainRootHash?: string;
   /** ChallengerNFT contract address on 0G Galileo */
@@ -127,9 +125,8 @@ export function configFromEnv(): AgentConfig {
     zgIndexerUrl: required("ZG_INDEXER_URL"),
     baseRpcUrl: required("BASE_RPC_URL"),
     zgRpcUrl: required("ZG_RPC_URL"),
-    zgComputeProviderAddress: required("ZG_COMPUTE_PROVIDER_ADDRESS"),
-    brainRootHash: process.env["BRAIN_ROOT_HASH"],
-    challengerNftAddress: process.env["CHALLENGER_NFT_ADDRESS"] as `0x${string}` | undefined,
+    brainRootHash: required("BRAIN_ROOT_HASH"),
+    challengerNftAddress: required("CHALLENGER_NFT_ADDRESS") as `0x${string}` | undefined,
     fillRegistryAddress: required("FILL_REGISTRY_ADDRESS") as `0x${string}`,
   };
 }

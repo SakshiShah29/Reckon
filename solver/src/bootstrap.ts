@@ -5,7 +5,7 @@ import {
   maxUint256,
   namehash,
 } from "viem";
-import { USDC_BASE, SOLVERS_PARENT } from "@reckon-protocol/types";
+import { USDC_BASE_SEP, SOLVERS_PARENT } from "@reckon-protocol/types";
 
 const BondedAmountABI = [
   {
@@ -100,7 +100,7 @@ export async function bootstrapSolver(config: BootstrapConfig): Promise<void> {
     console.log(`[bootstrap] Bond insufficient (${bonded} / ${BOND_AMOUNT}) — depositing ${needed} USDC...`);
 
     const allowance: bigint = await publicClient.readContract({
-      address: USDC_BASE,
+      address: USDC_BASE_SEP,
       abi: erc20Abi,
       functionName: "allowance",
       args: [solverAddress, solverBondVaultAddress],
@@ -109,12 +109,12 @@ export async function bootstrapSolver(config: BootstrapConfig): Promise<void> {
     if (allowance < needed) {
       console.log(`[bootstrap] Approving USDC on SolverBondVault...`);
       const approveTx = await walletClient.writeContract({
-        address: USDC_BASE,
+        address: USDC_BASE_SEP,
         abi: erc20Abi,
         functionName: "approve",
         args: [solverBondVaultAddress, maxUint256],
       });
-      await publicClient.waitForTransactionReceipt({ hash: approveTx });
+      await publicClient.waitForTransactionReceipt({ hash: approveTx, confirmations: 2 });
       console.log(`[bootstrap] USDC approved: ${approveTx}`);
     }
 

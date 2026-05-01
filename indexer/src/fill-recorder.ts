@@ -24,6 +24,13 @@ const base = defineChain({
   rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
 });
 
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
+});
+
 /**
  * ABI for writing to FillRegistry.
  * recordFill is a permissioned function — only the recorder EOA can call it.
@@ -73,14 +80,23 @@ export interface RecorderConfig {
   solverRegistryAddress: Address;
   /** Default EBBO tolerance in bps if we can't read from validator */
   defaultToleranceBps: number;
+  /** RPC for reading fill tx receipts (Anvil fork) — defaults to rpcUrl */
+  fillSourceRpcUrl?: string;
+  /** Map Anvil fork token addresses → Base Sepolia mock token addresses.
+   *  Keys and values should be lowercased. When dual-chain mode is active,
+   *  tokenIn/tokenOut from the Anvil fork are translated before recording
+   *  on Base Sepolia so the EBBOOracle pair key matches the mock pools. */
+  tokenAddressMap?: Record<string, Address>;
 }
 
 interface RecorderClients {
   publicClient: PublicClient;
+  fillSourceClient: PublicClient;
   walletClient: ReturnType<typeof createWalletClient<Transport, Chain, PrivateKeyAccount>>;
   fillRegistryAddress: Address;
   solverRegistryAddress: Address;
   defaultToleranceBps: number;
+  tokenAddressMap?: Record<string, Address>;
 }
 
 let clients: RecorderClients | null = null;
@@ -88,27 +104,41 @@ let clients: RecorderClients | null = null;
 export function initRecorder(config: RecorderConfig): void {
   const account = privateKeyToAccount(config.relayerPrivateKey);
 
+  const recorderChain = config.fillSourceRpcUrl ? baseSepolia : base;
+
   const publicClient = createPublicClient({
-    chain: base,
+    chain: recorderChain,
     transport: http(config.rpcUrl),
   });
 
+  const fillSourceClient = config.fillSourceRpcUrl
+    ? createPublicClient({ chain: base, transport: http(config.fillSourceRpcUrl) })
+    : publicClient;
+
   const walletClient = createWalletClient({
-    chain: base,
+    chain: recorderChain,
     transport: http(config.rpcUrl),
     account,
   });
 
   clients = {
     publicClient,
+    fillSourceClient,
     walletClient,
     fillRegistryAddress: config.fillRegistryAddress,
     solverRegistryAddress: config.solverRegistryAddress,
     defaultToleranceBps: config.defaultToleranceBps,
+    tokenAddressMap: config.tokenAddressMap,
   };
 
   console.log(`[fill-recorder] Initialized with relayer ${account.address}`);
-  console.log(`[fill-recorder] FillRegistry: ${config.fillRegistryAddress}`);
+  console.log(`[fill-recorder] FillRegistry: ${config.fillRegistryAddress} (chain ${recorderChain.id})`);
+  if (config.fillSourceRpcUrl) {
+    console.log(`[fill-recorder] Dual-chain: reading fill txs from Anvil, recording on Base Sepolia`);
+  }
+  if (config.tokenAddressMap) {
+    console.log(`[fill-recorder] Token address map active: ${Object.keys(config.tokenAddressMap).length} mapping(s)`);
+  }
 }
 
 /**
@@ -126,7 +156,7 @@ export async function recordFill(
   if (!clients) throw new Error("Recorder not initialized — call initRecorder first");
 
   const tag = rawFill.orderHash.slice(0, 10);
-  const { publicClient, walletClient, fillRegistryAddress, solverRegistryAddress } = clients;
+  const { publicClient, fillSourceClient, walletClient, fillRegistryAddress, solverRegistryAddress } = clients;
 
   // 1. Check if filler is a registered Reckon solver via SolverRegistry.namehashOf()
   //    Skip entirely if the filler is not registered — we only track Reckon-protected fills.
@@ -148,11 +178,10 @@ export async function recordFill(
     return null;
   }
 
-  // 2. Read transaction receipt to extract order details
-  //    The resolved order's input/output amounts and tokens are decoded from the Fill tx
+  // 2. Read transaction receipt from the fill source chain (Anvil fork)
   let receipt;
   try {
-    receipt = await publicClient.getTransactionReceipt({
+    receipt = await fillSourceClient.getTransactionReceipt({
       hash: rawFill.transactionHash,
     });
   } catch {
@@ -200,13 +229,27 @@ export async function recordFill(
     return null;
   }
 
+  // Translate Anvil fork token addresses → Base Sepolia mock addresses
+  if (clients.tokenAddressMap) {
+    const mappedIn = clients.tokenAddressMap[tokenIn.toLowerCase()];
+    const mappedOut = clients.tokenAddressMap[tokenOut.toLowerCase()];
+    if (mappedIn) {
+      console.log(`[fill-recorder] ${tag} tokenIn ${tokenIn} → ${mappedIn}`);
+      tokenIn = mappedIn;
+    }
+    if (mappedOut) {
+      console.log(`[fill-recorder] ${tag} tokenOut ${tokenOut} → ${mappedOut}`);
+      tokenOut = mappedOut;
+    }
+  }
+
   // 3. Extract eboTolerance from the fill tx's calldata.
   //    The ReckonValidator expects additionalValidationData = abi.encode(uint16).
   //    We try to find this in the tx input; if not found (e.g. the order didn't use
   //    ReckonValidator), fall back to the default tolerance.
   let toleranceBps = clients.defaultToleranceBps;
   try {
-    const tx = await publicClient.getTransaction({ hash: rawFill.transactionHash });
+    const tx = await fillSourceClient.getTransaction({ hash: rawFill.transactionHash });
     // The ReckonValidator address is embedded in the order's additionalValidationContract.
     // For now, search for the 32-byte abi.encode(uint16) pattern in the last portion of calldata.
     // This is a best-effort heuristic — in production, fully decode the ResolvedOrder struct.
@@ -222,7 +265,7 @@ export async function recordFill(
 
   const fillBlock = Number(rawFill.blockNumber);
   const challengeDeadline = fillBlock + CHALLENGE_WINDOW_BLOCKS; // mirror contract's computation for local record
-  const block = await publicClient.getBlock({ blockNumber: rawFill.blockNumber });
+  const block = await fillSourceClient.getBlock({ blockNumber: rawFill.blockNumber });
 
   // 4. Count outputs (we only support single-output orders)
   //    Count how many distinct transfers go TO the swapper
@@ -237,7 +280,6 @@ export async function recordFill(
   let recordTxHash: `0x${string}`;
   try {
     recordTxHash = await walletClient.writeContract({
-      chain: base,
       address: fillRegistryAddress,
       abi: FillRegistryWriteABI,
       functionName: "recordFill",

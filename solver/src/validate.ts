@@ -1,5 +1,5 @@
 import { type Address, decodeAbiParameters, type Hex } from "viem";
-import { PRIORITY_ORDER_REACTOR, USDC_BASE, WETH_BASE } from "@reckon-protocol/types";
+import { PRIORITY_ORDER_REACTOR, USDC_BASE, WETH_BASE, USDC_BASE_SEP, WETH_BASE_SEP } from "@reckon-protocol/types";
 
 export interface DecodedOrder {
   reactor: Address;
@@ -129,12 +129,12 @@ export function validateOrder(
 
   const inputLower = order.inputToken.toLowerCase();
   const outputLower = order.outputToken.toLowerCase();
-  const usdcLower = USDC_BASE.toLowerCase();
-  const wethLower = WETH_BASE.toLowerCase();
+  const usdcAddresses = new Set([USDC_BASE.toLowerCase(), USDC_BASE_SEP.toLowerCase()]);
+  const wethAddresses = new Set([WETH_BASE.toLowerCase(), WETH_BASE_SEP.toLowerCase()]);
 
   const isValidPair =
-    (inputLower === usdcLower && outputLower === wethLower) ||
-    (inputLower === wethLower && outputLower === usdcLower);
+    (usdcAddresses.has(inputLower) && wethAddresses.has(outputLower)) ||
+    (wethAddresses.has(inputLower) && usdcAddresses.has(outputLower));
 
   if (!isValidPair) {
     return { error: `Unsupported token pair: ${order.inputToken} → ${order.outputToken}`, code: "UNSUPPORTED_TOKEN" };

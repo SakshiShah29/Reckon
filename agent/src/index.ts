@@ -76,7 +76,7 @@ async function main() {
           axl_ed25519_secret: "0".repeat(64),
           ebbo_threshold_prefs: { minSlash: "1000000", maxBondPct: 50 },
           kh_api_key: process.env["KH_API_KEY"] ?? "kh_dev",
-          model_config: { model: "GLM-5-FP8" },
+          model_config: { model: "qwen/qwen-2.5-7b-instruct" },
           performance_history: [],
         },
       };
@@ -87,22 +87,10 @@ async function main() {
     }
   }
 
-  // ── 0G Compute broker (lazy) ───────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let computeBroker: any | null = null;
-
-  async function getComputeBroker() {
-    if (computeBroker) return computeBroker;
-    try {
-      computeBroker = await createBroker(
-        config.zgRpcUrl,
-        process.env["ZG_AGENT_PRIVATE_KEY"]!,
-      );
-      return computeBroker;
-    } catch (err) {
-      console.warn("[orchestrator] Failed to create 0G Compute broker:", err);
-      return null;
-    }
+  // ── 0G Compute API key ──────────────────────────────────────
+  const zgApiKey = process.env["ZG_API_KEY"] ?? "";
+  if (!zgApiKey) {
+    console.warn("[orchestrator] ZG_API_KEY not set — triage will default to 0.5");
   }
 
   // ── Coordinate config ──────────────────────────────────────
@@ -156,16 +144,11 @@ async function main() {
     console.log(`\n[orchestrator] ── Fill ${tag} ──`);
 
     // Step 1: triage.ts — 0G Compute suspicion score
-    const broker = await getComputeBroker();
     let suspicionScore = 0.5;
 
-    if (broker) {
+    if (zgApiKey) {
       try {
-        const triageResult = await runSuspicionTriage(
-          fill,
-          config.zgComputeProviderAddress,
-          broker,
-        );
+        const triageResult = await runSuspicionTriage(fill, zgApiKey);
         suspicionScore = triageResult.score;
         console.log(
           `[triage] ${tag} score=${suspicionScore.toFixed(3)} model=${triageResult.model}`,
@@ -174,7 +157,7 @@ async function main() {
         console.warn(`[triage] ${tag} failed, defaulting to 0.5:`, err);
       }
     } else {
-      console.log(`[triage] ${tag} no broker, defaulting to 0.5`);
+      console.log(`[triage] ${tag} no API key, defaulting to 0.5`);
     }
 
     if (suspicionScore < SUSPICION_THRESHOLD) {
@@ -272,15 +255,8 @@ async function main() {
       (BigInt(fill.outputAmount) * EBBO_PRECISION) / BigInt(fill.inputAmount),
     );
 
-    if (broker) {
-      generateSlashExplanation(
-        fill,
-        benchmarkStr,
-        actualStr,
-        shortfallPct,
-        config.zgComputeProviderAddress,
-        broker,
-      )
+    if (zgApiKey) {
+      generateSlashExplanation(fill, benchmarkStr, actualStr, shortfallPct, zgApiKey)
         .then((r) => console.log(`[submit] ${tag} NL: ${r.explanation}`))
         .catch(() => {});
     }
@@ -327,18 +303,6 @@ async function main() {
   console.log("[orchestrator] Running. Pipeline: triage → ebbo → coordinate → decide → submit");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function createBroker(rpcUrl: string, privateKey: string): Promise<any> {
-  const { ethers } = await import("ethers");
-  const { createZGComputeNetworkBroker } = await import(
-    "@0glabs/0g-serving-broker"
-  );
-
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const wallet = new ethers.Wallet(privateKey, provider);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return await createZGComputeNetworkBroker(wallet as any);
-}
 
 function formatPrice(price1e18: bigint): string {
   const whole = price1e18 / EBBO_PRECISION;
