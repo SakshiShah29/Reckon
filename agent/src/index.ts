@@ -109,7 +109,14 @@ async function main() {
     baseRpcUrl: config.baseRpcUrl,
     agentPrivateKey: (process.env["ZG_AGENT_PRIVATE_KEY"] ?? "0x") as `0x${string}`,
     challengerAddress: (process.env["CHALLENGER_ADDRESS"] ?? "0x") as `0x${string}`,
+    keeperHubWebhookUrl: process.env["KH_WEBHOOK_URL"],
+    keeperHubApiKey: process.env["KH_WEBHOOK_API_KEY"],
+    keeperHubOrgApiKey: process.env["KH_API_KEY"],
   };
+
+  if (submitConfig.keeperHubWebhookUrl) {
+    console.log("[orchestrator] KeeperHub webhook mode enabled — challenges will be submitted via KeeperHub");
+  }
 
   // ── Base client for on-chain reads ─────────────────────────
   const baseClient = createPublicClient({

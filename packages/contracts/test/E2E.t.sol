@@ -351,6 +351,107 @@ contract E2ETest is Test {
         assertEq(IERC20(USDC).balanceOf(solver), usdcAmount, "solver should receive USDC");
     }
 
+    // ── Delegation tests ──
+
+    function _recordBadFill(bytes32 orderHash, uint128 inputAmount, uint128 outputAmount, uint16 eboTolerance) internal {
+        vm.prank(recorder);
+        fillRegistry.recordFill({
+            orderHash: orderHash,
+            filler: solver,
+            swapper: swapper,
+            tokenIn: USDC,
+            tokenOut: WETH,
+            inputAmount: inputAmount,
+            outputAmount: outputAmount,
+            eboTolerance: eboTolerance,
+            outputsLength: 1,
+            fillBlock: uint64(block.number)
+        });
+    }
+
+    function test_Delegate_CanSubmitOnBehalfOfAgent() public {
+        address delegate = makeAddr("delegate");
+
+        vm.prank(challEoa);
+        challenger.setAgentDelegate(agentTokenId, delegate);
+        assertEq(challenger.agentDelegate(agentTokenId), delegate);
+
+        uint256 benchmark = ebboOracle.computeBenchmark(USDC, WETH);
+        uint128 inputAmount = 1e18;
+        uint128 outputAmount = uint128(benchmark / 2);
+        bytes32 orderHash = keccak256("delegate.order.1");
+        _recordBadFill(orderHash, inputAmount, outputAmount, 100);
+
+        uint256 solverBondBefore = vault.bondedAmount(solverNode);
+        uint256 challBalanceBefore = IERC20(USDC).balanceOf(challEoa);
+        uint256 bond = _minBond();
+
+        vm.prank(delegate);
+        challenger.submit(orderHash, bond, agentTokenId, _dummyPermit(bond), "");
+
+        assertLt(vault.bondedAmount(solverNode), solverBondBefore, "solver bond should decrease");
+        assertGt(IERC20(USDC).balanceOf(challEoa), challBalanceBefore, "agent owner should get bond back");
+        assertEq(IERC20(USDC).balanceOf(delegate), 0, "delegate should not receive anything");
+    }
+
+    function test_Delegate_UnauthorizedReverts() public {
+        address unauthorized = makeAddr("unauthorized");
+
+        uint256 benchmark = ebboOracle.computeBenchmark(USDC, WETH);
+        bytes32 orderHash = keccak256("unauth.order.1");
+        _recordBadFill(orderHash, 1e18, uint128(benchmark / 2), 100);
+
+        uint256 bond = _minBond();
+        vm.prank(unauthorized);
+        vm.expectRevert(ReckonErrors.NotAgentOwner.selector);
+        challenger.submit(orderHash, bond, agentTokenId, _dummyPermit(bond), "");
+    }
+
+    function test_Delegate_OnlyOwnerCanSetDelegate() public {
+        vm.prank(makeAddr("notOwner"));
+        vm.expectRevert(ReckonErrors.NotAgentOwner.selector);
+        challenger.setAgentDelegate(agentTokenId, makeAddr("delegate"));
+    }
+
+    function test_Delegate_OwnerCanStillSubmitDirectly() public {
+        vm.prank(challEoa);
+        challenger.setAgentDelegate(agentTokenId, makeAddr("delegate"));
+
+        uint256 benchmark = ebboOracle.computeBenchmark(USDC, WETH);
+        bytes32 orderHash = keccak256("owner.direct.1");
+        _recordBadFill(orderHash, 1e18, uint128(benchmark / 2), 100);
+
+        uint256 bond = _minBond();
+        vm.prank(challEoa);
+        challenger.submit(orderHash, bond, agentTokenId, _dummyPermit(bond), "");
+
+        assertTrue(fillRegistry.getFill(orderHash).slashed, "fill should be slashed");
+    }
+
+    function test_Delegate_FailedChallenge_BondGoesToTreasury() public {
+        address delegate = makeAddr("delegate");
+
+        vm.prank(challEoa);
+        challenger.setAgentDelegate(agentTokenId, delegate);
+
+        uint256 benchmark = ebboOracle.computeBenchmark(USDC, WETH);
+        uint128 inputAmount = 1e18;
+        uint128 outputAmount = uint128(benchmark * 2);
+        bytes32 orderHash = keccak256("delegate.fail.1");
+        _recordBadFill(orderHash, inputAmount, outputAmount, 100);
+
+        uint256 bond = _minBond();
+        uint256 challBalanceBefore = IERC20(USDC).balanceOf(challEoa);
+        uint256 treasuryBalanceBefore = IERC20(USDC).balanceOf(treasury);
+
+        vm.prank(delegate);
+        challenger.submit(orderHash, bond, agentTokenId, _dummyPermit(bond), "");
+
+        assertEq(IERC20(USDC).balanceOf(challEoa), challBalanceBefore - bond, "agent owner should lose bond");
+        assertEq(IERC20(USDC).balanceOf(treasury), treasuryBalanceBefore + bond, "treasury should receive bond");
+        assertFalse(fillRegistry.getFill(orderHash).slashed, "fill should NOT be slashed");
+    }
+
     function test_Reactor_UnregisteredFillerReverts() public {
         vm.txGasPrice(block.basefee);
 

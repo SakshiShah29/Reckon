@@ -86,11 +86,15 @@ export interface SubmitConfig {
   baseRpcUrl: string;
   agentPrivateKey: Hex;
   challengerAddress: Address;
+  keeperHubWebhookUrl?: string;
+  keeperHubApiKey?: string;
+  keeperHubOrgApiKey?: string;
 }
 
 export interface SubmitResult {
   success: boolean;
   txHash?: Hex;
+  runId?: string;
   error?: string;
 }
 
@@ -122,12 +126,6 @@ export async function submitChallenge(
       transport: http(config.baseRpcUrl),
     });
 
-    const walletClient = createWalletClient({
-      account,
-      chain: baseSepolia,
-      transport: http(config.baseRpcUrl),
-    });
-
     const challengerBond = (solverBond * BigInt(CHALLENGER_BOND_PCT)) / 100n;
 
     // Ensure USDC allowance to Permit2
@@ -139,6 +137,11 @@ export async function submitChallenge(
     });
 
     if (allowance < challengerBond) {
+      const walletClient = createWalletClient({
+        account,
+        chain: baseSepolia,
+        transport: http(config.baseRpcUrl),
+      });
       console.log(`[submit] Approving USDC to Permit2...`);
       const approveTx = await walletClient.writeContract({
         address: USDC_BASE_SEP,
@@ -193,7 +196,26 @@ export async function submitChallenge(
     const digest = keccak256(concat(["0x1901", domainSep, structHash]));
     const signature = await account.sign({ hash: digest });
 
-    // Send the challenge transaction
+    // Route to KeeperHub webhook if configured, otherwise submit directly
+    if (config.keeperHubWebhookUrl && config.keeperHubApiKey) {
+      return await submitViaKeeperHub(
+        orderHash,
+        challengerBond,
+        agentTokenId,
+        permit,
+        signature,
+        config.keeperHubWebhookUrl,
+        config.keeperHubApiKey,
+        config.keeperHubOrgApiKey,
+      );
+    }
+
+    const walletClient = createWalletClient({
+      account,
+      chain: baseSepolia,
+      transport: http(config.baseRpcUrl),
+    });
+
     const txHash = await walletClient.writeContract({
       address: config.challengerAddress,
       abi: ChallengerABI,
@@ -214,4 +236,97 @@ export async function submitChallenge(
       error: `Challenge submission failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+async function submitViaKeeperHub(
+  orderHash: Hex,
+  challengerBond: bigint,
+  agentTokenId: string,
+  permit: { permitted: { token: Address; amount: bigint }; nonce: bigint; deadline: bigint },
+  signature: Hex,
+  webhookUrl: string,
+  apiKey: string,
+  orgApiKey?: string,
+): Promise<SubmitResult> {
+  const payload = {
+    orderHash,
+    challengerBond: challengerBond.toString(),
+    agentTokenId,
+    permit: {
+      permitted: {
+        token: permit.permitted.token,
+        amount: permit.permitted.amount.toString(),
+      },
+      nonce: permit.nonce.toString(),
+      deadline: permit.deadline.toString(),
+    },
+    signature,
+  };
+
+  console.log(`[submit] Sending challenge via KeeperHub webhook...`);
+
+  const response = await fetch(webhookUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    return { success: false, error: `KeeperHub webhook failed (${response.status}): ${text}` };
+  }
+
+  const result = await response.json() as { runId?: string; executionId?: string };
+  const runId = result.runId ?? result.executionId;
+
+  console.log(`[submit] KeeperHub run started: ${runId}`);
+
+  if (!runId || !orgApiKey) {
+    return { success: true, runId };
+  }
+
+  // Poll execution logs via KeeperHub REST API to get the tx hash
+  const logsUrl = `https://app.keeperhub.com/api/workflows/executions/${runId}/logs`;
+  const maxAttempts = 15;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+
+    try {
+      const logsRes = await fetch(logsUrl, {
+        headers: { Authorization: `Bearer ${orgApiKey}` },
+      });
+
+      if (!logsRes.ok) {
+        console.log(`[submit] Poll attempt ${i + 1}: ${logsRes.status}`);
+        continue;
+      }
+
+      const logsData = await logsRes.json() as {
+        execution?: {
+          status?: string;
+          output?: { transactionHash?: string; error?: string };
+          error?: string;
+        };
+      };
+
+      const exec = logsData.execution;
+      if (!exec) continue;
+
+      if (exec.status === "success" && exec.output?.transactionHash) {
+        return { success: true, txHash: exec.output.transactionHash as Hex, runId };
+      }
+
+      if (exec.status === "error") {
+        return { success: false, runId, error: exec.error ?? exec.output?.error ?? "KeeperHub run failed" };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return { success: true, runId };
 }

@@ -34,6 +34,13 @@ contract Challenger is Ownable {
     address public protocolTreasury;
     uint16 public minChallengerBondBps = 1000;
 
+    mapping(uint256 agentTokenId => address delegate) public agentDelegate;
+
+    function setAgentDelegate(uint256 agentTokenId, address delegate) external {
+        if (ownerRegistry.ownerOf(agentTokenId) != msg.sender) revert ReckonErrors.NotAgentOwner();
+        agentDelegate[agentTokenId] = delegate;
+    }
+
     constructor(
         address initialOwner,
         FillRegistry _fillRegistry,
@@ -74,25 +81,40 @@ contract Challenger is Ownable {
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external {
-        (FillRegistry.FillRecord memory r, bytes32 challengerNode) =
+        (FillRegistry.FillRecord memory r, bytes32 challengerNode, address agentOwner) =
             _preflight(orderHash, msg.sender, agentTokenId);
 
-        uint256 solverBond = solverBondVault.bondedAmount(r.fillerNamehash);
-        if (challengerBond < solverBond * minChallengerBondBps / 10_000) {
-            revert ReckonErrors.ChallengerBondTooSmall();
+        {
+            uint256 minBond = solverBondVault.bondedAmount(r.fillerNamehash) * minChallengerBondBps / 10_000;
+            if (challengerBond < minBond) revert ReckonErrors.ChallengerBondTooSmall();
         }
 
-        _pullBond(challengerBond, msg.sender, permit, signature);
-
-        uint256 expectedOutput = _computeExpectedOutput(r);
-
+        _pullBond(challengerBond, agentOwner, permit, signature);
         emit ReckonEvents.ChallengeSubmitted(orderHash, challengerNode, agentTokenId, challengerBond);
 
+        _adjudicate(orderHash, r, challengerNode, agentTokenId, challengerBond, agentOwner);
+    }
+
+    function _adjudicate(
+        bytes32 orderHash,
+        FillRegistry.FillRecord memory r,
+        bytes32 challengerNode,
+        uint256 agentTokenId,
+        uint256 challengerBond,
+        address agentOwner
+    ) internal {
+        uint256 expectedOutput = _computeExpectedOutput(r);
         if (r.outputAmount < expectedOutput) {
-            _handleSuccess(orderHash, r.fillerNamehash, challengerNode, solverBond, expectedOutput - r.outputAmount, agentTokenId, challengerBond);
+            uint256 solverBond = solverBondVault.bondedAmount(r.fillerNamehash);
+            uint256 shortfall = expectedOutput - r.outputAmount;
+            uint256 slashAmt = shortfall > solverBond ? solverBond : shortfall;
+            solverBondVault.slash(r.fillerNamehash, slashAmt, orderHash, agentTokenId);
+            fillRegistry.markSlashed(orderHash);
+            usdc.safeTransfer(agentOwner, challengerBond);
+            emit ReckonEvents.ChallengeSucceeded(orderHash, r.fillerNamehash, challengerNode, slashAmt);
         } else {
             usdc.safeTransfer(protocolTreasury, challengerBond);
-            emit ReckonEvents.ChallengeFailed(orderHash, r.fillerNamehash, msg.sender);
+            emit ReckonEvents.ChallengeFailed(orderHash, r.fillerNamehash, agentOwner);
         }
     }
 
@@ -101,39 +123,24 @@ contract Challenger is Ownable {
         return benchmark * r.inputAmount / 1e18 * (10_000 - r.eboTolerance) / 10_000;
     }
 
-    function _handleSuccess(
-        bytes32 orderHash,
-        bytes32 fillerNamehash,
-        bytes32 challengerNode,
-        uint256 solverBond,
-        uint256 shortfall,
-        uint256 agentTokenId,
-        uint256 challengerBond
-    ) internal {
-        uint256 slashAmount = shortfall > solverBond ? solverBond : shortfall;
-
-        solverBondVault.slash(fillerNamehash, slashAmount, orderHash, agentTokenId);
-        fillRegistry.markSlashed(orderHash);
-
-        usdc.safeTransfer(msg.sender, challengerBond);
-
-        emit ReckonEvents.ChallengeSucceeded(orderHash, fillerNamehash, challengerNode, slashAmount);
-    }
-
-    function _preflight(bytes32 orderHash, address challengerEoa, uint256 agentTokenId)
+    function _preflight(bytes32 orderHash, address caller, uint256 agentTokenId)
         internal
         view
-        returns (FillRegistry.FillRecord memory r, bytes32 challengerNode)
+        returns (FillRegistry.FillRecord memory r, bytes32 challengerNode, address agentOwner)
     {
         r = fillRegistry.getFill(orderHash);
         if (r.fillBlock == 0) revert ReckonErrors.FillNotFound();
         if (r.slashed) revert ReckonErrors.AlreadySlashed();
         if (block.number > r.challengeDeadline) revert ReckonErrors.ChallengeWindowClosed();
-        if (!challengerRegistry.isRegistered(challengerEoa)) revert ReckonErrors.NotRegistered();
 
-        challengerNode = challengerRegistry.namehashOf(challengerEoa);
+        agentOwner = ownerRegistry.ownerOf(agentTokenId);
+        if (caller != agentOwner && agentDelegate[agentTokenId] != caller) {
+            revert ReckonErrors.NotAgentOwner();
+        }
+
+        if (!challengerRegistry.isRegistered(agentOwner)) revert ReckonErrors.NotRegistered();
+        challengerNode = challengerRegistry.namehashOf(agentOwner);
         if (challengerNode == r.fillerNamehash) revert ReckonErrors.SelfChallengeForbidden();
-        if (ownerRegistry.ownerOf(agentTokenId) != challengerEoa) revert ReckonErrors.NotAgentOwner();
     }
 
     function _pullBond(
