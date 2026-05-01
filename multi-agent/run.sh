@@ -1,34 +1,33 @@
 #!/usr/bin/env bash
 ##############################################################################
-# Reckon Multi-Agent Setup — single command
+# Reckon Multi-Agent Setup — Two-Chain Architecture
 #
 #   cd multi-agent && bash run.sh
+#
+# Architecture:
+#   - Anvil fork (147.182.164.208:8545) → swap event listening + EBBO pools
+#   - Base Sepolia                      → protocol contracts (FillRegistry, Challenger, etc.)
+#   - 0G Galileo                        → ChallengerNFT iNFTs
 #
 # What it does (in order):
 #   1. Build AXL binary from source (skips if exists)
 #   2. Generate 3 Ed25519 PEM keys (skips if exist)
 #   3. Start 3-node AXL mesh (hub + 2 spokes)
 #   4. Rebuild TypeScript packages (types + inft-tools)
-#   5. Provision 3 agents on 0G Galileo (mint iNFTs)
-#   6. Deploy contracts on Anvil fork
-#   7. Register solver + deposit bond
-#   8. Fund all 3 agents with ETH + USDC
-#   9. Generate agent .env files
-#  10. Start all 3 challenger agents
-#  11. Submit a bad fill to trigger the pipeline
+#   5. Provision agents on 0G Galileo (mint iNFTs)
+#   6. Generate agent .env files
+#   7. Start all 3 challenger agents
 #
 # Prerequisites:
 #   - Go 1.25+ installed
 #   - Homebrew OpenSSL on macOS (brew install openssl)
-#   - Foundry (forge + cast)
 #   - npm install already run at repo root
-#   - Anvil fork running at ANVIL_RPC (default: http://147.182.164.208:8545)
+#   - Anvil fork running at ANVIL_RPC
+#   - Contracts already deployed on Base Sepolia
 #
 # Environment overrides:
-#   ANVIL_RPC          — Anvil fork URL (default: http://147.182.164.208:8545)
-#   OWNER_PRIVATE_KEY  — Wallet with OG tokens on Galileo for minting
 #   SKIP_PROVISION     — Set to "true" to skip 0G Galileo provisioning
-#   SKIP_BAD_FILL      — Set to "true" to skip test fill submission
+#   SKIP_AXL_BUILD     — Set to "true" to skip AXL binary build
 ##############################################################################
 set -euo pipefail
 
@@ -39,42 +38,67 @@ CONFIGS_DIR="$SCRIPT_DIR/configs"
 LOGS_DIR="$SCRIPT_DIR/logs"
 AXL_DIR="$SCRIPT_DIR/axl"
 
-# ── Config ────────────────────────────────────────────────────
-ANVIL_RPC="${ANVIL_RPC:-http://147.182.164.208:8545}"
-OWNER_PRIVATE_KEY="${OWNER_PRIVATE_KEY:-0xf36ab74a4872adcd123b055c56de0d0552ace17cc7f82b9db523b83cf48d2b14}"
-CHALLENGER_NFT_ADDRESS="0xBfa01f3869d80Fdc45E861b4849199C581d2Ac9e"
+# ── Two-Chain Config ─────────────────────────────────────────
+ANVIL_RPC="http://127.0.0.1:8545"
+BASE_SEPOLIA_RPC="https://base-sepolia.g.alchemy.com/v2/Dp5FwElAg3eJPHhdUxBEFzOe5wF-ae0Y"
 ZG_RPC_URL="https://evmrpc-testnet.0g.ai"
 ZG_INDEXER_URL="https://indexer-storage-testnet-turbo.0g.ai"
 CHALLENGE_STRING="reckon-agent-auth-v1"
 
-# Anvil well-known private keys
-DEPLOYER_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-AGENT2_PK="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
-AGENT3_PK="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
-SOLVER_PK="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
+# Owner wallet (provisions iNFTs on 0G Galileo)
+OWNER_PRIVATE_KEY="0xf36ab74a4872adcd123b055c56de0d0552ace17cc7f82b9db523b83cf48d2b14"
 
-AGENT2_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
-AGENT3_ADDR="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
-SOLVER_ADDR="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+# ChallengerNFT on 0G Galileo
+CHALLENGER_NFT_ADDRESS="0x98b6D75380FC3Cb3483D88f6178A128e848582a0"
+
+# Base Sepolia contract addresses (pre-deployed)
+FILL_REGISTRY="0xb2f6cDEe56CcA45c9D7AeFe6E268C013C23a0C1D"
+CHALLENGER_CONTRACT="0xc249d4BDF82e3ba86C5Ddc16f58A031994b8E6cE"
+CHALLENGER_REGISTRY="0x34D283590D58B56d0c92e6b3e2c4cD7C9E432678"
+SOLVER_BOND_VAULT="0x8195ba15E335A4205c2bA2d928dC8BCd563CC783"
+
+# Agent wallets (real, not Anvil defaults)
+AGENT1_PK="0x7d405f33eea3d209f029796fc11d1e11dbeb4ce7f19a38aa8066098d4d2766c7"
+AGENT1_ADDR="0xbfC3d90156F2FF0412dEd13f6B26C2bF6C936976"
+
+AGENT2_PK="0x7a5fc5e4bd673c0502071b2ff3a18cdb6f60ac17ed8057679e361c940330dd72"
+AGENT2_ADDR="0xFdFa4fF359C9E06E82eF37300cA746CA189C22a4"
+
+AGENT3_PK="0xc66ed1f2a2d33edcb1b5809e8c74023fd4b2cca396875e23d2229a3578a64a77"
+AGENT3_ADDR="0x654A9DEB79f8Fa946Be91A1106541Ed5B573865B"
+
+# KeeperHub
+KH_WEBHOOK_URL="https://app.keeperhub.com/api/workflows/krgoqq0af5urb1k8vnww7/webhook"
+KH_WEBHOOK_API_KEY="wfb_NDD8eSj-eWftj17kPCtvtQMZ8EoYeYEd"
+KH_API_KEY="kh_0NxSwyj3anqqqJppiQp56v_oYG5GgLe9"
+
+# 0G Compute
+ZG_API_KEY="sk-6dc7300b-9c85-4c86-9d99-114d113069ad"
+
+# Owner signature (shared across all agents — same owner)
+OWNER_SIGNATURE="0x4c933e0867de5400e046f0fc04a3786b70129e07aa159d706944d5b3205cd4ed1144a576f5a7fc5e787e16a9dea46c8de0862c71eae37e603d1d91853d8adcf31c"
 
 mkdir -p "$KEYS_DIR" "$CONFIGS_DIR" "$LOGS_DIR"
 
 fail() { echo ""; echo "ERROR: $1"; exit 1; }
 
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║       Reckon Multi-Agent Setup (one command)        ║"
+echo "║   Reckon Multi-Agent Setup (Two-Chain + KeeperHub)  ║"
+echo "╠══════════════════════════════════════════════════════╣"
+echo "║  Anvil fork:    $ANVIL_RPC    ║"
+echo "║  Base Sepolia:  contracts chain                     ║"
+echo "║  0G Galileo:    ChallengerNFT iNFTs                 ║"
 echo "╚══════════════════════════════════════════════════════╝"
-echo ""
-echo "  Anvil RPC:  $ANVIL_RPC"
-echo "  Repo root:  $REPO_ROOT"
 echo ""
 
 ##############################################################################
 # 1. BUILD AXL
 ##############################################################################
-echo "━━━ [1/11] Build AXL binary ━━━"
+echo "━━━ [1/7] Build AXL binary ━━━"
 
-if [ -f "$AXL_DIR/node" ]; then
+if [ "${SKIP_AXL_BUILD:-false}" = "true" ] && [ -f "$AXL_DIR/node" ]; then
+  echo "  ✓ Skipping AXL build (SKIP_AXL_BUILD=true)"
+elif [ -f "$AXL_DIR/node" ]; then
   echo "  ✓ AXL binary already exists, skipping build"
 else
   if [ ! -d "$AXL_DIR" ]; then
@@ -90,7 +114,7 @@ fi
 # 2. GENERATE ED25519 KEYS
 ##############################################################################
 echo ""
-echo "━━━ [2/11] Generate Ed25519 PEM keys ━━━"
+echo "━━━ [2/7] Generate Ed25519 PEM keys ━━━"
 
 if [[ "$(uname)" == "Darwin" ]]; then
   OPENSSL="/opt/homebrew/opt/openssl/bin/openssl"
@@ -113,7 +137,7 @@ done
 # 3. START AXL MESH
 ##############################################################################
 echo ""
-echo "━━━ [3/11] Start AXL mesh (hub + 2 spokes) ━━━"
+echo "━━━ [3/7] Start AXL mesh (hub + 2 spokes) ━━━"
 
 # Kill any existing AXL nodes
 for PORT in 9001 9002 9012 9022; do
@@ -191,7 +215,7 @@ echo "  Spoke B key: ${SPOKE_B_KEY:0:16}..."
 # 4. REBUILD TS PACKAGES
 ##############################################################################
 echo ""
-echo "━━━ [4/11] Rebuild TypeScript packages ━━━"
+echo "━━━ [4/7] Rebuild TypeScript packages ━━━"
 
 (cd "$REPO_ROOT/packages/types" && npm run build) 2>&1 | tail -1
 echo "  ✓ @reckon-protocol/types built"
@@ -203,20 +227,51 @@ echo "  ✓ @reckon-protocol/inft-tools built"
 # 5. PROVISION AGENTS ON 0G GALILEO
 ##############################################################################
 echo ""
-echo "━━━ [5/11] Provision agents on 0G Galileo ━━━"
+echo "━━━ [5/7] Provision agents on 0G Galileo ━━━"
 
 PROVISION_DATA_FILE="$SCRIPT_DIR/provision-data.json"
 
 if [ "${SKIP_PROVISION:-false}" = "true" ] && [ -f "$PROVISION_DATA_FILE" ]; then
   echo "  ✓ Skipping provision (SKIP_PROVISION=true, using cached data)"
 else
-  # Create provision env files
-  for i in 1 2 3; do
-    ENV_FILE="$SCRIPT_DIR/.env.provision-${i}"
+  # Agent 1 is already provisioned (token #0)
+  if [ ! -f "$PROVISION_DATA_FILE" ]; then
+    echo '{}' > "$PROVISION_DATA_FILE"
+  fi
+
+  # Check if agent1 data already exists
+  HAS_AGENT1=$(python3 -c "import json; d=json.load(open('$PROVISION_DATA_FILE')); print('yes' if 'agent1' in d else 'no')" 2>/dev/null || echo "no")
+
+  if [ "$HAS_AGENT1" = "no" ]; then
+    echo "  Agent 1 already provisioned (token #0) — saving known data"
+    python3 -c "
+import json
+with open('$PROVISION_DATA_FILE') as f: d = json.load(f)
+d['agent1'] = {
+  'tokenId': '0',
+  'ownerSignature': '$OWNER_SIGNATURE',
+  'rootHash': '0xf9b98c78606c7ca007e8c8cefd6c7d7906b9a400af0223659e814c89442312e4'
+}
+with open('$PROVISION_DATA_FILE', 'w') as f: json.dump(d, f, indent=2)
+"
+    echo "  ✓ Agent 1 → iNFT #0 (pre-provisioned)"
+  else
+    echo "  ✓ Agent 1 data cached"
+  fi
+
+  # Provision agents 2 and 3 if not yet provisioned
+  for i in 2 3; do
+    HAS_AGENT=$(python3 -c "import json; d=json.load(open('$PROVISION_DATA_FILE')); print('yes' if 'agent$i' in d else 'no')" 2>/dev/null || echo "no")
+    if [ "$HAS_AGENT" = "yes" ]; then
+      echo "  ✓ Agent $i data cached"
+      continue
+    fi
+
     AGENT_ADDR_VAR=""
     if [ "$i" = "2" ]; then AGENT_ADDR_VAR="AGENT_ADDRESS=$AGENT2_ADDR"; fi
     if [ "$i" = "3" ]; then AGENT_ADDR_VAR="AGENT_ADDRESS=$AGENT3_ADDR"; fi
 
+    ENV_FILE="$SCRIPT_DIR/.env.provision-${i}"
     cat > "$ENV_FILE" << ENVEOF
 PRIVATE_KEY=$OWNER_PRIVATE_KEY
 CHALLENGER_NFT_ADDRESS=$CHALLENGER_NFT_ADDRESS
@@ -226,17 +281,11 @@ AXL_PEM_PATH=$KEYS_DIR/axl-identity-${i}.pem
 AGENT_CHALLENGE_STRING=$CHALLENGE_STRING
 MIN_SLASH_USDC=500000
 MAX_BOND_PCT=90
-ZG_MODEL=qwen/qwen-2.5-7b-instruct
+ZG_MODEL=GLM-5-FP8
 ${AGENT_ADDR_VAR}
 ENVEOF
-  done
 
-  # Run provision for each agent and capture output
-  echo '{}' > "$PROVISION_DATA_FILE"
-
-  for i in 1 2 3; do
     echo "  Provisioning Agent ${i}..."
-    ENV_FILE="$SCRIPT_DIR/.env.provision-${i}"
     OUTPUT=$(cd "$REPO_ROOT/inft-tools" && env $(cat "$ENV_FILE" | grep -v '^#' | grep -v '^$' | xargs) npx tsx src/provision.ts 2>&1) || {
       echo "  ⚠ Agent $i provision failed:"
       echo "$OUTPUT" | tail -5
@@ -247,7 +296,6 @@ ENVEOF
     OWNER_SIG=$(echo "$OUTPUT" | grep "^OWNER_SIGNATURE=" | cut -d= -f2)
     ROOT_HASH=$(echo "$OUTPUT" | grep "^BRAIN_ROOT_HASH=" | cut -d= -f2)
 
-    # Save to JSON
     python3 -c "
 import json
 with open('$PROVISION_DATA_FILE') as f: d = json.load(f)
@@ -255,10 +303,8 @@ d['agent$i'] = {'tokenId': '$TOKEN_ID', 'ownerSignature': '$OWNER_SIG', 'rootHas
 with open('$PROVISION_DATA_FILE', 'w') as f: json.dump(d, f, indent=2)
 "
     echo "  ✓ Agent $i → iNFT #$TOKEN_ID (root: ${ROOT_HASH:0:16}...)"
+    rm -f "$ENV_FILE"
   done
-
-  # Cleanup temp env files
-  rm -f "$SCRIPT_DIR/.env.provision-"*
 fi
 
 # Load provision data
@@ -275,113 +321,10 @@ AGENT3_SIG=$(python3 -c "import json; print(json.load(open('$PROVISION_DATA_FILE
 AGENT3_ROOT=$(python3 -c "import json; print(json.load(open('$PROVISION_DATA_FILE'))['agent3']['rootHash'])")
 
 ##############################################################################
-# 6. DEPLOY CONTRACTS ON ANVIL FORK
+# 6. GENERATE AGENT .ENV FILES
 ##############################################################################
 echo ""
-echo "━━━ [6/11] Deploy contracts on Anvil fork ━━━"
-
-# Derive agent 1 address from owner key
-AGENT1_ADDR=$(cast wallet address "$OWNER_PRIVATE_KEY" 2>/dev/null)
-echo "  Agent 1 addr: $AGENT1_ADDR"
-
-DEPLOY_OUTPUT=$(cd "$REPO_ROOT/packages/contracts" && \
-  ANVIL=true \
-  SOLVER="$SOLVER_ADDR" \
-  AGENT_1="$AGENT1_ADDR" \
-  AGENT_2="$AGENT2_ADDR" \
-  RELAYER_PK="$DEPLOYER_PK" \
-  SOLVER_PK="$SOLVER_PK" \
-  forge script script/DeployBase.s.sol \
-    --rpc-url "$ANVIL_RPC" \
-    --broadcast \
-    --private-key "$DEPLOYER_PK" 2>&1) || fail "Contract deployment failed"
-
-# Parse deployed addresses
-FILL_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "FillRegistry:" | awk '{print $NF}')
-CHALLENGER_CONTRACT=$(echo "$DEPLOY_OUTPUT" | grep "Challenger:" | awk '{print $NF}')
-CHALLENGER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "ChallengerRegistry:" | awk '{print $NF}')
-SOLVER_BOND_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "SolverBondVault:" | awk '{print $NF}')
-SOLVER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "SolverRegistry:" | awk '{print $NF}')
-EBBO_ORACLE=$(echo "$DEPLOY_OUTPUT" | grep "EBBOOracle:" | awk '{print $NF}')
-
-echo "  ✓ FillRegistry:       $FILL_REGISTRY"
-echo "  ✓ Challenger:         $CHALLENGER_CONTRACT"
-echo "  ✓ ChallengerRegistry: $CHALLENGER_REGISTRY"
-echo "  ✓ SolverBondVault:    $SOLVER_BOND_VAULT"
-echo "  ✓ EBBOOracle:         $EBBO_ORACLE"
-
-# Save for later use
-cat > "$SCRIPT_DIR/contracts.env" << EOF
-FILL_REGISTRY_ADDRESS=$FILL_REGISTRY
-CHALLENGER_ADDRESS=$CHALLENGER_CONTRACT
-CHALLENGER_REGISTRY_ADDRESS=$CHALLENGER_REGISTRY
-SOLVER_BOND_VAULT_ADDRESS=$SOLVER_BOND_VAULT
-SOLVER_REGISTRY_ADDRESS=$SOLVER_REGISTRY
-EBBO_ORACLE_ADDRESS=$EBBO_ORACLE
-EOF
-
-##############################################################################
-# 7. REGISTER SOLVER + DEPOSIT BOND
-##############################################################################
-echo ""
-echo "━━━ [7/11] Register solver + deposit bond ━━━"
-
-SOLVER_NODE=$(cast keccak "demo-solver.solvers.reckon.eth")
-
-cast send "$SOLVER_REGISTRY" "register(bytes32,address)" "$SOLVER_NODE" "$SOLVER_ADDR" \
-  --private-key "$DEPLOYER_PK" --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
-echo "  ✓ Solver registered"
-
-# Fund solver with USDC
-SOLVER_USDC_SLOT=$(cast keccak "$(printf '%064s%064s' "$(echo "$SOLVER_ADDR" | sed 's/0x//' | tr '[:upper:]' '[:lower:]')" "9" | sed 's/ //g; s/^/0x/')")
-cast rpc anvil_setStorageAt \
-  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" \
-  "$SOLVER_USDC_SLOT" \
-  "0x000000000000000000000000000000000000000000000000000000174876e800" \
-  --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
-
-# Approve + deposit
-cast send "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" "approve(address,uint256)" "$SOLVER_BOND_VAULT" 50000000000 \
-  --private-key "$SOLVER_PK" --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
-cast send "$SOLVER_BOND_VAULT" "deposit(uint256)" 50000000000 \
-  --private-key "$SOLVER_PK" --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
-echo "  ✓ Solver bonded (50,000 USDC)"
-
-##############################################################################
-# 8. FUND AGENTS WITH ETH + USDC
-##############################################################################
-echo ""
-echo "━━━ [8/11] Fund agents on Anvil fork ━━━"
-
-USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-
-fund_agent() {
-  local name=$1 addr=$2
-  # ETH
-  curl -s -X POST "$ANVIL_RPC" -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"anvil_setBalance\",\"params\":[\"$addr\",\"0x56BC75E2D63100000\"],\"id\":1}" > /dev/null
-  # USDC — compute storage slot
-  local slot
-  slot=$(cd "$REPO_ROOT" && npx tsx -e "
-    import { keccak256 } from 'viem';
-    const addr = '$addr';
-    const s = keccak256(('0x' + addr.slice(2).toLowerCase().padStart(64, '0') + (9).toString(16).padStart(64, '0')) as \`0x\${string}\`);
-    console.log(s);
-  " 2>/dev/null)
-  curl -s -X POST "$ANVIL_RPC" -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"method\":\"anvil_setStorageAt\",\"params\":[\"$USDC\",\"$slot\",\"0x00000000000000000000000000000000000000000000000000000002540be400\"],\"id\":1}" > /dev/null
-  echo "  ✓ $name ($addr): 100 ETH + 10,000 USDC"
-}
-
-fund_agent "Agent 1" "$AGENT1_ADDR"
-fund_agent "Agent 2" "$AGENT2_ADDR"
-fund_agent "Agent 3" "$AGENT3_ADDR"
-
-##############################################################################
-# 9. GENERATE AGENT .ENV FILES
-##############################################################################
-echo ""
-echo "━━━ [9/11] Generate agent .env files ━━━"
+echo "━━━ [6/7] Generate agent .env files ━━━"
 
 AGENT_DIR="$REPO_ROOT/agent"
 
@@ -389,11 +332,16 @@ write_agent_env() {
   local num=$1 token_id=$2 sig=$3 root_hash=$4 priv_key=$5 axl_port=$6 peer_keys=$7
 
   cat > "$AGENT_DIR/.env.agent${num}" << ENVEOF
-# Agent $num — auto-generated by multi-agent/run.sh
-BASE_RPC_URL=$ANVIL_RPC
+# Agent $num — auto-generated by multi-agent/run.sh (two-chain setup)
+# Contracts chain (Base Sepolia)
+BASE_RPC_URL=$BASE_SEPOLIA_RPC
+# EBBO pool reads (Anvil fork of Base mainnet)
+ANVIL_RPC_URL=$ANVIL_RPC
+# 0G
 ZG_RPC_URL=$ZG_RPC_URL
 ZG_INDEXER_URL=$ZG_INDEXER_URL
 
+# Agent identity
 AGENT_TOKEN_ID=$token_id
 AGENT_CHALLENGE_STRING=$CHALLENGE_STRING
 ZG_AGENT_PRIVATE_KEY=$priv_key
@@ -401,13 +349,21 @@ OWNER_SIGNATURE=$sig
 BRAIN_ROOT_HASH=$root_hash
 CHALLENGER_NFT_ADDRESS=$CHALLENGER_NFT_ADDRESS
 
-ZG_COMPUTE_PROVIDER_ADDRESS=0x0000000000000000000000000000000000000000
-
+# Base Sepolia contracts
 FILL_REGISTRY_ADDRESS=$FILL_REGISTRY
 CHALLENGER_ADDRESS=$CHALLENGER_CONTRACT
 CHALLENGER_REGISTRY_ADDRESS=$CHALLENGER_REGISTRY
 SOLVER_BOND_VAULT_ADDRESS=$SOLVER_BOND_VAULT
 
+# 0G Compute
+ZG_API_KEY=$ZG_API_KEY
+
+# KeeperHub
+KH_WEBHOOK_URL=$KH_WEBHOOK_URL
+KH_WEBHOOK_API_KEY=$KH_WEBHOOK_API_KEY
+KH_API_KEY=$KH_API_KEY
+
+# AXL mesh
 AXL_API_URL=http://127.0.0.1:$axl_port
 AXL_PEER_KEYS=$peer_keys
 
@@ -417,15 +373,15 @@ ENVEOF
   echo "  ✓ agent/.env.agent${num}"
 }
 
-write_agent_env 1 "$AGENT1_TOKEN" "$AGENT1_SIG" "$AGENT1_ROOT" "$OWNER_PRIVATE_KEY" 9002 "$SPOKE_A_KEY,$SPOKE_B_KEY"
+write_agent_env 1 "$AGENT1_TOKEN" "$AGENT1_SIG" "$AGENT1_ROOT" "$AGENT1_PK" 9002 "$SPOKE_A_KEY,$SPOKE_B_KEY"
 write_agent_env 2 "$AGENT2_TOKEN" "$AGENT2_SIG" "$AGENT2_ROOT" "$AGENT2_PK" 9012 "$HUB_KEY,$SPOKE_B_KEY"
 write_agent_env 3 "$AGENT3_TOKEN" "$AGENT3_SIG" "$AGENT3_ROOT" "$AGENT3_PK" 9022 "$HUB_KEY,$SPOKE_A_KEY"
 
 ##############################################################################
-# 10. START AGENTS
+# 7. START AGENTS
 ##############################################################################
 echo ""
-echo "━━━ [10/11] Start challenger agents ━━━"
+echo "━━━ [7/7] Start challenger agents ━━━"
 
 # Kill any old agents
 pkill -f "DOTENV_CONFIG_PATH=.*agent.*src/index.ts" 2>/dev/null || true
@@ -439,113 +395,46 @@ done
 
 # Wait for agents to boot
 echo "  Waiting for agents to boot (downloading brain blobs from 0G)..."
-sleep 12
+sleep 15
 
 # Check boot status
-ALL_BOOTED=true
 for i in 1 2 3; do
   if grep -q "Pipeline: triage" "$LOGS_DIR/agent-${i}.log" 2>/dev/null; then
     echo "  ✓ Agent $i: running"
+  elif grep -q "Two-chain mode" "$LOGS_DIR/agent-${i}.log" 2>/dev/null; then
+    echo "  ✓ Agent $i: running (two-chain mode)"
   else
     echo "  ⚠ Agent $i: still booting (check logs/agent-${i}.log)"
-    ALL_BOOTED=false
   fi
 done
-
-##############################################################################
-# 11. SUBMIT BAD FILL
-##############################################################################
-echo ""
-
-if [ "${SKIP_BAD_FILL:-false}" = "true" ]; then
-  echo "━━━ [11/11] Skipped bad fill (SKIP_BAD_FILL=true) ━━━"
-else
-  echo "━━━ [11/11] Submit bad fill to trigger pipeline ━━━"
-
-  # Write inline bad fill script
-  cat > "$SCRIPT_DIR/_bad-fill.ts" << 'TSEOF'
-import {
-  createPublicClient, createWalletClient, http, keccak256, toHex,
-  type Address, type Hex, parseAbi,
-} from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { base } from "viem/chains";
-import { USDC_BASE, WETH_BASE } from "@reckon-protocol/types";
-
-const RPC = process.env.ANVIL_RPC!;
-const FILL_REGISTRY = process.env.FILL_REGISTRY_ADDRESS! as Address;
-const EBBO_ORACLE = process.env.EBBO_ORACLE_ADDRESS! as Address;
-const DEPLOYER_KEY = process.env.DEPLOYER_PK! as `0x${string}`;
-const SOLVER_ADDR = process.env.SOLVER_ADDR! as Address;
-
-const abi = parseAbi([
-  "function recordFill(bytes32 orderHash, address filler, address swapper, address tokenIn, address tokenOut, uint128 inputAmount, uint128 outputAmount, uint16 eboTolerance, uint8 outputsLength, uint64 fillBlock) external",
-  "function computeBenchmark(address tokenIn, address tokenOut) external view returns (uint256)",
-]);
-
-async function main() {
-  const deployer = privateKeyToAccount(DEPLOYER_KEY);
-  const client = createPublicClient({ chain: base, transport: http(RPC) });
-  const wallet = createWalletClient({ chain: base, transport: http(RPC), account: deployer });
-
-  const benchmark = await client.readContract({
-    address: EBBO_ORACLE, abi, functionName: "computeBenchmark",
-    args: [WETH_BASE as Address, USDC_BASE as Address],
-  });
-
-  const inputAmount = 10n ** 16n;
-  const fairOutput = ((benchmark as bigint) * inputAmount) / 10n ** 18n;
-  const badOutput = fairOutput / 2n;
-  const currentBlock = await client.getBlockNumber();
-  const orderHash = keccak256(toHex(`bad-fill-${Date.now()}-${Math.random()}`));
-
-  console.log(`  Benchmark: ${benchmark}, fair: ${Number(fairOutput)/1e6} USDC, bad: ${Number(badOutput)/1e6} USDC (50%)`);
-
-  const tx = await wallet.writeContract({
-    address: FILL_REGISTRY, abi, functionName: "recordFill",
-    args: [
-      orderHash, SOLVER_ADDR,
-      "0x000000000000000000000000000000000000dEaD" as Address,
-      WETH_BASE as Address, USDC_BASE as Address,
-      inputAmount, badOutput, 100, 1, currentBlock,
-    ],
-  });
-  const receipt = await client.waitForTransactionReceipt({ hash: tx });
-  console.log(`  ✓ Bad fill recorded: ${orderHash.slice(0, 18)}... (block ${receipt.blockNumber})`);
-}
-main().catch(e => { console.error(e); process.exit(1); });
-TSEOF
-
-  ANVIL_RPC="$ANVIL_RPC" \
-  FILL_REGISTRY_ADDRESS="$FILL_REGISTRY" \
-  EBBO_ORACLE_ADDRESS="$EBBO_ORACLE" \
-  DEPLOYER_PK="$DEPLOYER_PK" \
-  SOLVER_ADDR="$SOLVER_ADDR" \
-    npx tsx "$SCRIPT_DIR/_bad-fill.ts" 2>/dev/null
-
-  rm -f "$SCRIPT_DIR/_bad-fill.ts"
-fi
 
 ##############################################################################
 # DONE
 ##############################################################################
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║              Multi-Agent Setup Complete             ║"
+echo "║         Multi-Agent Setup Complete (v2)             ║"
 echo "╠══════════════════════════════════════════════════════╣"
+echo "║                                                    ║"
+echo "║  Architecture:                                     ║"
+echo "║    Anvil fork  → EBBO pool reads                   ║"
+echo "║    Base Sepolia → FillRegistry, Challenger         ║"
+echo "║    0G Galileo  → ChallengerNFT iNFTs               ║"
 echo "║                                                    ║"
 echo "║  AXL Mesh:  3 nodes (hub:9002, spoke-a:9012,      ║"
 echo "║             spoke-b:9022)                          ║"
 echo "║                                                    ║"
+echo "║  KeeperHub: webhook challenge submission enabled   ║"
+echo "║                                                    ║"
 echo "║  Agents:    3 challengers listening for fills      ║"
+echo "║             on Base Sepolia FillRegistry           ║"
 echo "║                                                    ║"
 echo "║  Logs:      multi-agent/logs/agent-{1,2,3}.log    ║"
 echo "║                                                    ║"
 echo "║  Pipeline:  triage → ebbo → coordinate → decide   ║"
-echo "║             → submit                               ║"
+echo "║             → submit (via KeeperHub webhook)       ║"
 echo "║                                                    ║"
 echo "║  To stop:   bash multi-agent/stop.sh               ║"
-echo "║  Bad fill:  SKIP_BAD_FILL=false bash run.sh        ║"
 echo "║                                                    ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""

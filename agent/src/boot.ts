@@ -27,8 +27,10 @@ export interface AgentConfig {
   ownerSignature: string;
   /** 0G Storage indexer URL */
   zgIndexerUrl: string;
-  /** Base RPC URL (Anvil fork or mainnet) */
+  /** Base RPC URL — contracts chain (Base Sepolia or Anvil fork) */
   baseRpcUrl: string;
+  /** Anvil fork RPC URL — for EBBO pool reads (Base mainnet fork, chain 8453) */
+  anvilRpcUrl?: string;
   /** 0G RPC URL */
   zgRpcUrl: string;
   /** Brain blob root hash (from iNFT tokenURI) — if known, skips on-chain read */
@@ -124,6 +126,7 @@ export function configFromEnv(): AgentConfig {
     ownerSignature: required("OWNER_SIGNATURE"),
     zgIndexerUrl: required("ZG_INDEXER_URL"),
     baseRpcUrl: required("BASE_RPC_URL"),
+    anvilRpcUrl: process.env["ANVIL_RPC_URL"],
     zgRpcUrl: required("ZG_RPC_URL"),
     brainRootHash: required("BRAIN_ROOT_HASH"),
     challengerNftAddress: required("CHALLENGER_NFT_ADDRESS") as `0x${string}` | undefined,

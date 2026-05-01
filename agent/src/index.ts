@@ -12,16 +12,16 @@ import { coordinate, type CoordinateConfig } from "./coordinate.js";
 import { decideChallenge } from "./decide.js";
 import { submitChallenge, type SubmitConfig } from "./submit.js";
 import type { FillRecord } from "@reckon-protocol/types";
-import { EBBO_PRECISION } from "@reckon-protocol/types";
+import { EBBO_PRECISION, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENT_ROOT = join(__dirname, "..");
 
-const base = defineChain({
-  id: 8453,
-  name: "Base",
+const baseSepolia = defineChain({
+  id: BASE_SEPOLIA_CHAIN_ID,
+  name: "Base Sepolia",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
 });
 
 const SolverBondVaultABI = [
@@ -118,9 +118,13 @@ async function main() {
     console.log("[orchestrator] KeeperHub webhook mode enabled — challenges will be submitted via KeeperHub");
   }
 
+  // ── EBBO RPC — same as contracts chain (Base Sepolia) since test pool lives there ──
+  const ebboRpcUrl = config.baseRpcUrl;
+  console.log("[orchestrator] EBBO + contracts both via Base Sepolia");
+
   // ── Base client for on-chain reads ─────────────────────────
   const baseClient = createPublicClient({
-    chain: base,
+    chain: baseSepolia,
     transport: http(config.baseRpcUrl),
   });
   const bondVaultAddress = process.env["SOLVER_BOND_VAULT_ADDRESS"] as Address | undefined;
@@ -172,13 +176,16 @@ async function main() {
       return;
     }
 
-    // Step 2: ebbo.ts — deterministic benchmark math
-    console.log(`[ebbo] ${tag} computing benchmark at block ${fill.fillBlock}...`);
+    // Step 2: ebbo.ts — deterministic benchmark math (uses Anvil fork for pool reads)
+    // In two-chain mode, fillBlock is a Base Sepolia block number which doesn't exist
+    // on the Anvil fork (Base mainnet). Use latest block on the fork instead.
+    const ebboBlock = config.anvilRpcUrl ? undefined : BigInt(fill.fillBlock);
+    console.log(`[ebbo] ${tag} computing benchmark at block ${ebboBlock ?? "latest"}...`);
     const ebboResult = await computeEBBO(
-      config.baseRpcUrl,
+      ebboRpcUrl,
       fill.tokenIn as `0x${string}`,
       fill.tokenOut as `0x${string}`,
-      BigInt(fill.fillBlock),
+      ebboBlock,
     );
 
     const { slashable, expectedOutput, shortfall } = isSlashable(

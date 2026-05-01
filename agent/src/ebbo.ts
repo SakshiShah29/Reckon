@@ -7,12 +7,12 @@ import {
   defineChain,
 } from "viem";
 
-// Define Base chain locally to avoid viem/chains deposit-transaction type mismatch
-const base = defineChain({
-  id: 8453,
-  name: "Base",
+// Define Base Sepolia chain locally (test pool lives here)
+const baseSepolia = defineChain({
+  id: 84532,
+  name: "Base Sepolia",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://mainnet.base.org"] } },
+  rpcUrls: { default: { http: ["https://sepolia.base.org"] } },
 });
 import {
   UniswapV3PoolABI,
@@ -154,7 +154,7 @@ export async function computeEBBO(
   blockNumber?: bigint,
 ): Promise<EBBOResult> {
   const client = createPublicClient({
-    chain: base,
+    chain: baseSepolia,
     transport: http(rpcUrl),
   });
 

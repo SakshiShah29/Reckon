@@ -5,6 +5,7 @@ import { SolverLeaderboard } from "@/components/solver-leaderboard";
 import { SlashDonut } from "@/components/slash-donut";
 import { FillFeed } from "@/components/fill-feed";
 import { ChallengeFeed } from "@/components/challenge-feed";
+import { PartnerLogos } from "@/components/partner-logos";
 
 export default function HomePage() {
   return (
@@ -53,6 +54,11 @@ export default function HomePage() {
         <SolverLeaderboard />
         <SlashDonut />
         <ChallengeFeed />
+      </div>
+
+      {/* Partner logos footer */}
+      <div className="mt-6">
+        <PartnerLogos />
       </div>
     </div>
   );
