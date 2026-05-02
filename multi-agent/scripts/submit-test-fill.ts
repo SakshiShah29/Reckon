@@ -13,7 +13,7 @@ import {
   parseAbi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { USDC_BASE, WETH_BASE, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
+import { USDC_BASE_SEP, WETH_BASE_SEP, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
 
 const baseSepolia = defineChain({
   id: BASE_SEPOLIA_CHAIN_ID,
@@ -58,8 +58,8 @@ async function main() {
         orderHash,
         SOLVER,
         "0x000000000000000000000000000000000000dEaD" as Address, // swapper
-        WETH_BASE as Address, // tokenIn
-        USDC_BASE as Address, // tokenOut
+        WETH_BASE_SEP as Address, // tokenIn (Base Sepolia)
+        USDC_BASE_SEP as Address, // tokenOut (Base Sepolia)
         inputAmount, // inputAmount
         badOutput, // outputAmount (intentionally low)
         100, // eboTolerance (1%)

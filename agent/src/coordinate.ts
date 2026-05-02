@@ -155,6 +155,7 @@ function createAxlTransport(
                 continue;
               }
 
+              // Tiebreaker: earlier timestamp wins; if equal, lower tokenId wins
               if (
                 msg.claimedAt < ownClaimedAt ||
                 (msg.claimedAt === ownClaimedAt && msg.agentTokenId < ownTokenId)
@@ -213,6 +214,11 @@ export async function coordinate(
     config.axlApiUrl && config.axlPeerKeys?.length
       ? createAxlTransport(config.axlApiUrl, config.axlPeerKeys)
       : createNoopTransport();
+
+  // Jitter based on agentTokenId to stagger KV writes and avoid double-claims
+  const jitterMs = (parseInt(agentTokenId, 10) % 5) * 2000 + Math.random() * 1000;
+  console.log(`[coordinate] Jitter: ${Math.round(jitterMs)}ms before acquire`);
+  await sleep(jitterMs);
 
   const now = Math.floor(Date.now() / 1000);
 
