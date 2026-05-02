@@ -137,16 +137,69 @@ export async function startChallengeListener(
         for (const log of successLogs) {
           const orderHash = log.args.orderHash!;
           const fillerNamehash = log.args.fillerNamehash!;
+          const challengerNode = log.args.challengerNode!;
           const slashAmount = log.args.slashAmount!;
           const tag = orderHash.slice(0, 10);
 
           console.log(`[challenge-listener] ${tag} ChallengeSucceeded — slashed ${slashAmount}`);
 
-          // Mark fill as slashed + finalized in MongoDB
+          const db = await getDb();
           const fills = await getFillsCollection();
+
+          // Mark fill as slashed + finalized
           await fills.updateOne(
             { orderHash },
             { $set: { slashed: true, finalized: true, slashAmount: slashAmount.toString() } },
+          );
+
+          // Look up original fill for context
+          const fill = await fills.findOne({ orderHash });
+
+          // Write to challenges collection
+          await db.collection(MONGO_COLLECTIONS.challenges).updateOne(
+            { orderHash, challengerNamehash: challengerNode },
+            {
+              $set: {
+                orderHash,
+                challengerAddress: challengerNode,
+                challengerNamehash: challengerNode,
+                agentTokenId: "",
+                benchmarkOutput: "",
+                actualOutput: fill?.outputAmount ?? "",
+                eboToleranceBps: fill?.eboToleranceBps ?? 0,
+                succeeded: true,
+                slashAmount: slashAmount.toString(),
+                challengeBlock: Number(log.blockNumber),
+                challengeTimestamp: Math.floor(Date.now() / 1000),
+                txHash: log.transactionHash,
+              },
+            },
+            { upsert: true },
+          );
+
+          // Write to slashes collection (60/30/10 split)
+          const swapperRestitution = (slashAmount * 6000n) / 10000n;
+          const ownerBounty = (slashAmount * 3000n) / 10000n;
+          const protocolCut = slashAmount - swapperRestitution - ownerBounty;
+
+          await db.collection(MONGO_COLLECTIONS.slashes).updateOne(
+            { orderHash },
+            {
+              $set: {
+                orderHash,
+                solverNamehash: fillerNamehash,
+                challengerNamehash: challengerNode,
+                agentTokenId: "",
+                slashAmount: slashAmount.toString(),
+                swapperRestitution: swapperRestitution.toString(),
+                ownerBounty: ownerBounty.toString(),
+                protocolCut: protocolCut.toString(),
+                nlExplanation: "",
+                timestamp: Math.floor(Date.now() / 1000),
+                txHash: log.transactionHash,
+              },
+            },
+            { upsert: true },
           );
 
           // Write reputation delta
@@ -164,11 +217,35 @@ export async function startChallengeListener(
 
           console.log(`[challenge-listener] ${tag} ChallengeFailed — solver defended`);
 
-          // Mark fill as defended in MongoDB
+          const db = await getDb();
           const fills = await getFillsCollection();
+
+          // Mark fill as defended
           await fills.updateOne(
             { orderHash },
             { $set: { challengeFailed: true } },
+          );
+
+          // Write to challenges collection (failed)
+          await db.collection(MONGO_COLLECTIONS.challenges).updateOne(
+            { orderHash },
+            {
+              $set: {
+                orderHash,
+                challengerAddress: log.args.challenger ?? "",
+                challengerNamehash: "",
+                agentTokenId: "",
+                benchmarkOutput: "",
+                actualOutput: "",
+                eboToleranceBps: 0,
+                succeeded: false,
+                slashAmount: "0",
+                challengeBlock: Number(log.blockNumber),
+                challengeTimestamp: Math.floor(Date.now() / 1000),
+                txHash: log.transactionHash,
+              },
+            },
+            { upsert: true },
           );
 
           // Solver gets a small reputation bonus for being wrongly challenged

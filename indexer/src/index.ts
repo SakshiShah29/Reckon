@@ -169,7 +169,7 @@ async function main() {
 
   if (challengerContractAddress && solverRegistryAddress) {
     stopChallengeListener = await startChallengeListener({
-      rpcUrl: baseRpcUrl,
+      rpcUrl: recorderRpcUrl,   // Challenge events are on Base Sepolia, not Anvil
       recorderRpcUrl,
       relayerPrivateKey,
       challengerAddress: challengerContractAddress,
