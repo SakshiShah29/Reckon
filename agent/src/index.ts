@@ -6,7 +6,7 @@ import { createPublicClient, http, defineChain, type Address } from "viem";
 import { bootAgent, configFromEnv, type BootedAgent } from "./boot.js";
 import { bootstrapChallenger } from "./bootstrap.js";
 import { startFillListener } from "./listener.js";
-import { computeEBBO, isSlashable } from "./ebbo.js";
+import { computeEBBO, computeEBBOViaKeeperHub, isSlashable, type EBBOKeeperHubConfig } from "./ebbo.js";
 import { runSuspicionTriage, generateSlashExplanation } from "./triage.js";
 import { coordinate, type CoordinateConfig } from "./coordinate.js";
 import { decideChallenge } from "./decide.js";
@@ -118,6 +118,19 @@ async function main() {
     console.log("[orchestrator] KeeperHub webhook mode enabled — challenges will be submitted via KeeperHub");
   }
 
+  // ── EBBO KeeperHub config ──────────────────────────────────
+  const ebboKhConfig: EBBOKeeperHubConfig | undefined = process.env["KH_EBBO_WEBHOOK_URL"]
+    ? {
+        webhookUrl: process.env["KH_EBBO_WEBHOOK_URL"],
+        apiKey: process.env["KH_WEBHOOK_API_KEY"] ?? "",
+        orgApiKey: process.env["KH_API_KEY"],
+      }
+    : undefined;
+
+  if (ebboKhConfig) {
+    console.log("[orchestrator] KeeperHub EBBO mode enabled — benchmark reads via KeeperHub");
+  }
+
   // ── EBBO RPC — same as contracts chain (Base Sepolia) since test pool lives there ──
   const ebboRpcUrl = config.baseRpcUrl;
   console.log("[orchestrator] EBBO + contracts both via Base Sepolia");
@@ -133,8 +146,9 @@ async function main() {
   const relayerUrl = process.env["RELAYER_URL"];
   const challengerLabel = process.env["CHALLENGER_LABEL"];
   const challengerRegistryAddress = process.env["CHALLENGER_REGISTRY_ADDRESS"] as Address | undefined;
+  const ownerRegistryAddress = process.env["OWNER_REGISTRY_ADDRESS"] as Address | undefined;
 
-  if (relayerUrl && challengerLabel && challengerRegistryAddress) {
+  if (relayerUrl && challengerLabel && challengerRegistryAddress && ownerRegistryAddress) {
     const { privateKeyToAccount } = await import("viem/accounts");
     const agentAccount = privateKeyToAccount(submitConfig.agentPrivateKey);
 
@@ -142,11 +156,13 @@ async function main() {
       publicClient: baseClient,
       agentAddress: agentAccount.address,
       challengerRegistryAddress,
+      ownerRegistryAddress,
+      agentTokenId: config.tokenId,
       relayerUrl,
       challengerLabel,
     });
   } else {
-    console.log("[bootstrap] Skipped — set RELAYER_URL, CHALLENGER_LABEL, CHALLENGER_REGISTRY_ADDRESS to enable");
+    console.log("[bootstrap] Skipped — set RELAYER_URL, CHALLENGER_LABEL, CHALLENGER_REGISTRY_ADDRESS, OWNER_REGISTRY_ADDRESS to enable");
   }
 
   // ── SKILL.md pipeline: per-fill handler ────────────────────
@@ -176,17 +192,20 @@ async function main() {
       return;
     }
 
-    // Step 2: ebbo.ts — deterministic benchmark math (uses Anvil fork for pool reads)
-    // In two-chain mode, fillBlock is a Base Sepolia block number which doesn't exist
-    // on the Anvil fork (Base mainnet). Use latest block on the fork instead.
-    const ebboBlock = config.anvilRpcUrl ? undefined : BigInt(fill.fillBlock);
-    console.log(`[ebbo] ${tag} computing benchmark at block ${ebboBlock ?? "latest"}...`);
-    const ebboResult = await computeEBBO(
-      ebboRpcUrl,
-      fill.tokenIn as `0x${string}`,
-      fill.tokenOut as `0x${string}`,
-      ebboBlock,
-    );
+    // Step 2: ebbo.ts — benchmark price via KeeperHub or direct RPC
+    console.log(`[ebbo] ${tag} computing benchmark...`);
+    const ebboResult = ebboKhConfig
+      ? await computeEBBOViaKeeperHub(
+          fill.tokenIn as `0x${string}`,
+          fill.tokenOut as `0x${string}`,
+          ebboKhConfig,
+        )
+      : await computeEBBO(
+          ebboRpcUrl,
+          fill.tokenIn as `0x${string}`,
+          fill.tokenOut as `0x${string}`,
+          config.anvilRpcUrl ? undefined : BigInt(fill.fillBlock),
+        );
 
     const { slashable, expectedOutput, shortfall } = isSlashable(
       ebboResult.benchmarkPrice,

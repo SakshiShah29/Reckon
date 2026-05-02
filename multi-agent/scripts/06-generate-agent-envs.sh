@@ -44,21 +44,21 @@ read -p "ZG_COMPUTE_PROVIDER_ADDRESS: " COMPUTE_PROVIDER
 echo ""
 echo "--- Agent 1 (already provisioned, token 0) ---"
 read -p "Agent 1 OWNER_SIGNATURE: " AGENT1_OWNER_SIG
-AGENT1_PRIVATE_KEY="0xf36ab74a4872adcd123b055c56de0d0552ace17cc7f82b9db523b83cf48d2b14"
+AGENT1_PRIVATE_KEY="0x..."
 
 # Agent 2 values (from provision output)
 echo ""
 echo "--- Agent 2 (from provision-agent2.log) ---"
 read -p "Agent 2 AGENT_TOKEN_ID: " AGENT2_TOKEN_ID
 read -p "Agent 2 OWNER_SIGNATURE: " AGENT2_OWNER_SIG
-AGENT2_PRIVATE_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+AGENT2_PRIVATE_KEY="0x..."
 
 # Agent 3 values (from provision output)
 echo ""
 echo "--- Agent 3 (from provision-agent3.log) ---"
 read -p "Agent 3 AGENT_TOKEN_ID: " AGENT3_TOKEN_ID
 read -p "Agent 3 OWNER_SIGNATURE: " AGENT3_OWNER_SIG
-AGENT3_PRIVATE_KEY="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
+AGENT3_PRIVATE_KEY="0x..."
 
 # ── Generate .env files ──
 mkdir -p "$ENVS_DIR"

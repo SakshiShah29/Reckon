@@ -15,11 +15,23 @@ const IsRegisteredABI = [
   },
 ] as const;
 
+const OwnerOfABI = [
+  {
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    name: "ownerOf",
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
 export interface BootstrapConfig {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   publicClient: any;
   agentAddress: Address;
   challengerRegistryAddress: Address;
+  ownerRegistryAddress: Address;
+  agentTokenId: string;
   relayerUrl: string;
   challengerLabel: string;
 }
@@ -32,11 +44,28 @@ export async function bootstrapChallenger(config: BootstrapConfig): Promise<void
     publicClient,
     agentAddress,
     challengerRegistryAddress,
+    ownerRegistryAddress,
+    agentTokenId,
     relayerUrl,
     challengerLabel,
   } = config;
 
-  // 1. Check if already registered on-chain
+  // 1. Verify agent token ownership
+  const tokenOwner: Address = await publicClient.readContract({
+    address: ownerRegistryAddress,
+    abi: OwnerOfABI,
+    functionName: "ownerOf",
+    args: [BigInt(agentTokenId)],
+  });
+
+  if (tokenOwner.toLowerCase() !== agentAddress.toLowerCase()) {
+    throw new Error(
+      `Agent token ${agentTokenId} is owned by ${tokenOwner}, not ${agentAddress}`,
+    );
+  }
+  console.log(`[bootstrap] Agent token ${agentTokenId} ownership verified`);
+
+  // 2. Check if already registered on-chain
   const alreadyRegistered: boolean = await publicClient.readContract({
     address: challengerRegistryAddress,
     abi: IsRegisteredABI,
@@ -49,13 +78,13 @@ export async function bootstrapChallenger(config: BootstrapConfig): Promise<void
     return;
   }
 
-  // 2. Resolve ENS to check if the name exists but points elsewhere
+  // 3. Resolve ENS to check if the name exists but points elsewhere
   const fullName = `${challengerLabel}.${CHALLENGERS_PARENT}`;
   const node = namehash(fullName) as Hex;
 
   console.log(`[bootstrap] ${fullName} not registered — requesting registration from relayer...`);
 
-  // 3. POST to relayer /register
+  // 4. POST to relayer /register
   const res = await fetch(`${relayerUrl}/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -76,7 +105,7 @@ export async function bootstrapChallenger(config: BootstrapConfig): Promise<void
   const result = await res.json() as any;
   console.log(`[bootstrap] Relayer accepted: ${result.fullName} (tx: ${result.txHash})`);
 
-  // 4. Poll ChallengerRegistry until on-chain confirmation
+  // 5. Poll ChallengerRegistry until on-chain confirmation
   console.log(`[bootstrap] Waiting for on-chain confirmation...`);
   const deadline = Date.now() + REGISTRATION_POLL_TIMEOUT_MS;
 

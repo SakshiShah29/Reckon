@@ -228,3 +228,84 @@ export function isSlashable(
 
   return { slashable, expectedOutput, shortfall };
 }
+
+export interface EBBOKeeperHubConfig {
+  webhookUrl: string;
+  apiKey: string;
+  orgApiKey?: string;
+}
+
+export async function computeEBBOViaKeeperHub(
+  tokenIn: Address,
+  tokenOut: Address,
+  config: EBBOKeeperHubConfig,
+): Promise<EBBOResult> {
+  const response = await fetch(config.webhookUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({ tokenIn, tokenOut }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`KeeperHub EBBO webhook failed (${response.status}): ${text}`);
+  }
+
+  const result = await response.json() as { runId?: string; executionId?: string };
+  const runId = result.runId ?? result.executionId;
+
+  if (!runId || !config.orgApiKey) {
+    throw new Error("KeeperHub EBBO: no runId or orgApiKey for polling");
+  }
+
+  console.log(`[ebbo] KeeperHub run started: ${runId}`);
+
+  const logsUrl = `https://app.keeperhub.com/api/workflows/executions/${runId}/logs`;
+  const maxAttempts = 15;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+
+    try {
+      const logsRes = await fetch(logsUrl, {
+        headers: { Authorization: `Bearer ${config.orgApiKey}` },
+      });
+
+      if (!logsRes.ok) continue;
+
+      const logsData = await logsRes.json() as {
+        execution?: {
+          status?: string;
+          output?: { result?: string; success?: boolean };
+          error?: string;
+        };
+      };
+
+      const exec = logsData.execution;
+      if (!exec || (exec.status !== "success" && exec.status !== "error")) continue;
+
+      if (exec.status === "error") {
+        throw new Error(`KeeperHub EBBO run failed: ${exec.error}`);
+      }
+
+      if (!exec.output?.result) {
+        throw new Error("KeeperHub EBBO: missing benchmark result");
+      }
+
+      const benchmarkPrice = BigInt(exec.output.result);
+
+      return {
+        benchmarkPrice,
+        poolPrices: [benchmarkPrice],
+        blockNumber: 0n,
+      };
+    } catch (err) {
+      if (i === maxAttempts - 1) throw err;
+    }
+  }
+
+  throw new Error("KeeperHub EBBO: polling timed out");
+}

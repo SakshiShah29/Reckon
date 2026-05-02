@@ -39,6 +39,7 @@ interface SignedClaimMessage {
   agentTokenId: string;
   claimedAt: number;
   deadline: number;
+  signerPublicKey: string;
   signature: string;
 }
 
@@ -70,17 +71,20 @@ function signClaim(
   const digest = claimDigest(orderHash, agentTokenId, claimedAt, deadline);
   const privKeyBytes = toBytes(`0x${privateKeyHex}` as `0x${string}`);
   const sig = ed.sign(digest, privKeyBytes);
+  const pubKey = ed.getPublicKey(privKeyBytes);
   return {
     orderHash,
     agentTokenId,
     claimedAt,
     deadline,
+    signerPublicKey: toHex(pubKey),
     signature: toHex(sig),
   };
 }
 
-function verifyClaim(msg: SignedClaimMessage, peerPublicKeyHex: string): boolean {
+function verifyClaim(msg: SignedClaimMessage): boolean {
   try {
+    if (!msg.signerPublicKey || msg.signerPublicKey === "0x") return false;
     const digest = claimDigest(
       msg.orderHash,
       msg.agentTokenId,
@@ -88,7 +92,7 @@ function verifyClaim(msg: SignedClaimMessage, peerPublicKeyHex: string): boolean
       msg.deadline,
     );
     const sigBytes = toBytes(msg.signature as `0x${string}`);
-    const pubKeyBytes = toBytes(`0x${peerPublicKeyHex}` as `0x${string}`);
+    const pubKeyBytes = toBytes(msg.signerPublicKey as `0x${string}`);
     return ed.verify(sigBytes, digest, pubKeyBytes);
   } catch {
     return false;
@@ -139,20 +143,22 @@ function createAxlTransport(
           });
           if (resp.status === 200) {
             const msg = (await resp.json()) as SignedClaimMessage;
-            const fromPeer = resp.headers.get("X-From-Peer-Id") ?? "";
 
             if (
               msg.orderHash === orderHash &&
               msg.agentTokenId !== ownTokenId
             ) {
-              if (!verifyClaim(msg, fromPeer)) {
+              if (!verifyClaim(msg)) {
                 console.warn(
-                  `[coordinate] Rejected invalid signature from peer ${fromPeer.slice(0, 16)}...`,
+                  `[coordinate] Rejected invalid signature from agent ${msg.agentTokenId}`,
                 );
                 continue;
               }
 
-              if (msg.claimedAt < ownClaimedAt) {
+              if (
+                msg.claimedAt < ownClaimedAt ||
+                (msg.claimedAt === ownClaimedAt && msg.agentTokenId < ownTokenId)
+              ) {
                 return { lostTo: msg.agentTokenId };
               }
             }
@@ -226,6 +232,7 @@ export async function coordinate(
       agentTokenId,
       claimedAt: now,
       deadline: now + AXL_DEADLINE_SECONDS,
+      signerPublicKey: "0x",
       signature: "0x",
     };
   }
@@ -281,6 +288,17 @@ export async function coordinate(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [_result, err] = await (batcher as any).exec();
     if (err) throw err;
+
+    // 5. Read-after-write: verify we won the KV race
+    await sleep(1000);
+    const verifyResult = await checkClaim(config, keyBytes, KvClient);
+    if (verifyResult.claimedBy && verifyResult.claimedBy !== agentTokenId) {
+      return {
+        claimAcquired: false,
+        claimedBy: verifyResult.claimedBy,
+        reason: "kv_race_lost",
+      };
+    }
 
     return {
       claimAcquired: true,
