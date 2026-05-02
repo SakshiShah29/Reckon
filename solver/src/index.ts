@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { type Address, type Hex } from "viem";
 import { initFiller, getHealth, fillOrder, getFillerState } from "./filler.js";
@@ -30,7 +31,6 @@ const relayerUrl = optional("RELAYER_URL");
 const solverLabel = optional("SOLVER_LABEL");
 
 if (solverBondVaultAddress && relayerUrl && solverLabel) {
-  // Bootstrap uses Base Sepolia for bonds if available, otherwise Anvil
   const bootstrapRpcUrl = baseSepoliaRpcUrl ?? baseRpcUrl;
   const { createPublicClient, createWalletClient, http, defineChain } = await import("viem");
   const { privateKeyToAccount } = await import("viem/accounts");
@@ -64,11 +64,20 @@ if (solverBondVaultAddress && relayerUrl && solverLabel) {
 
 const app = new Hono();
 
+// ── CORS ─────────────────────────────────────────────────────────
+app.use("*", cors({
+  origin: "*",
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowHeaders: ["Content-Type"],
+}));
+
+// ── Health check ─────────────────────────────────────────────────
 app.get("/health", async (c) => {
   const health = await getHealth();
   return c.json(health);
 });
 
+// ── Fill endpoint — solver listens here for incoming orders ──────
 app.post("/fill", async (c) => {
   const body = await c.req.json<{ encodedOrder: Hex; signature: Hex }>();
 
@@ -90,6 +99,7 @@ app.post("/fill", async (c) => {
 
   try {
     const result = await fillOrder(body.encodedOrder, body.signature, decoded);
+    console.log(`[solver] Fill complete: ${result.txHash} (block ${result.fillBlock})`);
     return c.json(result);
   } catch (err: any) {
     const message = err.shortMessage ?? err.message ?? "unknown error";
@@ -107,6 +117,6 @@ console.log(`Validator: ${reckonValidatorAddress}`);
 console.log(`RPC: ${baseRpcUrl}`);
 console.log(`Port: ${port}`);
 
-serve({ fetch: app.fetch, port }, () => {
-  console.log(`[solver] Listening on http://localhost:${port}`);
+serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, () => {
+  console.log(`[solver] Listening on http://0.0.0.0:${port}`);
 });

@@ -47,62 +47,63 @@ export function IndexerHealth() {
     return () => clearInterval(iv);
   }, [fetchData]);
 
-  // Live uptime counter
   useEffect(() => {
     const tick = () => {
       const elapsed = Math.floor((Date.now() - mountTime.current) / 1000);
       const h = String(Math.floor(elapsed / 3600)).padStart(2, "0");
       const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
       const s = String(elapsed % 60).padStart(2, "0");
-      setUptime(`${h} : ${m} : ${s}`);
+      setUptime(`${h}:${m}:${s}`);
     };
     tick();
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
   }, []);
 
-  const recordsDisplay = stats ? stats.totalFills.toLocaleString() : "\u2014";
-  const blockDisplay = lastBlock ? lastBlock.toLocaleString() : "\u2014";
-
   return (
-    <div className="card p-4 bg-gradient-to-br from-[#141414] to-[#0f1a14] border-[#1a3a2a] relative overflow-hidden">
-      {/* "Card" styling like Visa card */}
-      <div className="flex items-center justify-between mb-6">
-        <span className="text-[10px] text-[#00D4AA] bg-[#00D4AA]/10 px-2 py-0.5 rounded font-medium flex items-center gap-1.5">
-          <span className="live-dot" style={{ width: 6, height: 6 }} />
-          {error ? "Error" : "Live"}
+    <div className="card card-green p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="icon-circle" style={{ background: "#34D399", width: 32, height: 32, borderRadius: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
+            </svg>
+          </div>
+          <span className="text-[12px] font-bold text-[#1E293B]" style={{ fontFamily: "var(--font-heading)" }}>Indexer</span>
+        </div>
+        <span className={`badge ${error ? "badge-red" : "badge-green"}`}>
+          <span className="flex items-center gap-1.5">
+            <span className="live-dot" style={{ width: 6, height: 6 }} />
+            {error ? "Error" : "Live"}
+          </span>
         </span>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00D4AA" strokeWidth="1.5" opacity="0.5">
-          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" />
-        </svg>
       </div>
 
-      <div className="space-y-3">
-        <div>
-          <p className="text-[10px] text-[#555] uppercase tracking-wider mb-1">Indexer Health</p>
-          <p className="text-white font-mono text-xl tracking-wide">{uptime} <span className="text-[#555] text-[11px] font-sans">uptime</span></p>
-        </div>
-
-        <div className="space-y-2 pt-2 border-t border-[#1a1a1a]">
-          <Row label="Last block" value={blockDisplay} />
-          <Row label="Records" value={recordsDisplay} color="green" />
-          <Row label="Challenges" value={stats ? stats.totalChallenges.toLocaleString() : "\u2014"} color="amber" />
-          <Row label="Slashes" value={stats ? stats.totalSlashes.toLocaleString() : "\u2014"} />
-        </div>
+      {/* Uptime */}
+      <div className="bg-[#F1F5F9] border-2 border-[#E2E8F0] rounded-xl px-3 py-2 mb-3">
+        <p className="text-[9px] font-semibold text-[#94A3B8] uppercase tracking-wider">Uptime</p>
+        <p className="text-[18px] font-bold text-[#1E293B] font-mono tracking-wider">{uptime}</p>
       </div>
 
-      {/* Decorative glow */}
-      <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-[#00D4AA] rounded-full opacity-[0.03] blur-2xl" />
+      {/* Stats rows */}
+      <div className="space-y-2">
+        <Row label="Last block" value={lastBlock ? lastBlock.toLocaleString() : "\u2014"} color="#8B5CF6" />
+        <Row label="Records" value={stats ? stats.totalFills.toLocaleString() : "\u2014"} color="#34D399" />
+        <Row label="Challenges" value={stats ? stats.totalChallenges.toLocaleString() : "\u2014"} color="#FBBF24" />
+        <Row label="Slashes" value={stats ? stats.totalSlashes.toLocaleString() : "\u2014"} color="#F472B6" />
+      </div>
     </div>
   );
 }
 
-function Row({ label, value, color }: { label: string; value: string; color?: string }) {
-  const c = color === "green" ? "text-[#34d399]" : color === "amber" ? "text-[#f59e0b]" : "text-[#ccc]";
+function Row({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div className="flex items-center justify-between text-[11px]">
-      <span className="text-[#555]">{label}</span>
-      <span className={`font-mono ${c}`}>{value}</span>
+    <div className="flex items-center justify-between text-[12px]">
+      <span className="flex items-center gap-2 text-[#64748B] font-medium">
+        <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+        {label}
+      </span>
+      <span className="font-mono font-semibold text-[#1E293B]">{value}</span>
     </div>
   );
 }

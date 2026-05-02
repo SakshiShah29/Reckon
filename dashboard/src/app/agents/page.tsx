@@ -7,14 +7,14 @@ export default function AgentsPage() {
       {/* Header */}
       <div className="flex items-end justify-between mb-5">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Agents</h1>
-          <p className="text-[13px] text-[#666] mt-1">
+          <h1 className="text-[20px] font-semibold text-white/90 tracking-tight">Agents</h1>
+          <p className="text-[13px] text-white/35 mt-1">
             Monitor live agent nodes, orchestrator pipelines, and Gensyn AXL mesh connectivity
           </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="live-dot" />
-          <span className="text-[11px] text-[#888]">Live monitoring</span>
+          <span className="text-[11px] text-white/30">Live monitoring</span>
         </div>
       </div>
 

@@ -22,7 +22,7 @@ interface FillRecord {
 interface ChartPoint {
   label: string;
   fills: number;
-  volume: number; // in USD terms
+  volume: number;
 }
 
 function groupFillsByDay(fills: FillRecord[]): ChartPoint[] {
@@ -34,13 +34,11 @@ function groupFillsByDay(fills: FillRecord[]): ChartPoint[] {
     if (!buckets[key]) buckets[key] = { fills: 0, volume: 0 };
     buckets[key].fills += 1;
 
-    // Convert inputAmount to USD equivalent
     const token = resolveToken(f.tokenIn);
     const amount = Number(BigInt(f.inputAmount)) / 10 ** token.decimals;
     buckets[key].volume += amount;
   }
 
-  // Sort by date order (we rely on fillTimestamp ordering from API)
   const seen = new Set<string>();
   const ordered: ChartPoint[] = [];
   for (const f of fills) {
@@ -52,7 +50,6 @@ function groupFillsByDay(fills: FillRecord[]): ChartPoint[] {
     }
   }
 
-  // Reverse so earliest is first
   return ordered.reverse();
 }
 
@@ -81,7 +78,6 @@ export function FillChart() {
     return () => clearInterval(iv);
   }, [fetchFills]);
 
-  // Compute total volume
   const totalVolume = fills.reduce((sum, f) => {
     const token = resolveToken(f.tokenIn);
     return sum + Number(BigInt(f.inputAmount)) / 10 ** token.decimals;
@@ -89,24 +85,22 @@ export function FillChart() {
 
   const data = groupFillsByDay(fills);
 
-  // Chart rendering
   const W = 560;
-  const H = 160;
+  const H = 180;
   const max = data.length > 0 ? Math.max(...data.map((d) => d.fills), 1) * 1.2 : 30;
 
   function xPos(i: number) {
     return data.length > 1 ? 40 + (i / (data.length - 1)) * (W - 80) : W / 2;
   }
   function yPos(v: number) {
-    return 10 + (1 - v / max) * (H - 30);
+    return 15 + (1 - v / max) * (H - 40);
   }
 
   const line = data.map((d, i) => `${i === 0 ? "M" : "L"}${xPos(i)},${yPos(d.fills)}`).join(" ");
   const area = data.length > 0
-    ? `${line} L${xPos(data.length - 1)},${H - 20} L${xPos(0)},${H - 20} Z`
+    ? `${line} L${xPos(data.length - 1)},${H - 25} L${xPos(0)},${H - 25} Z`
     : "";
 
-  // Format volume
   const volWhole = Math.floor(totalVolume);
   const volFrac = totalVolume > 0 ? (totalVolume - volWhole).toFixed(2).slice(1) : ".00";
   const volDisplay = volWhole >= 1_000_000
@@ -118,95 +112,97 @@ export function FillChart() {
       {/* Header */}
       <div className="flex items-start justify-between mb-1">
         <div>
-          <p className="text-[11px] text-[#666]">Fill Volume</p>
+          <p className="text-[12px] font-semibold text-[#64748B] uppercase tracking-wider">Fill Volume</p>
           {loading ? (
-            <p className="text-[28px] font-semibold text-white leading-tight">&mdash;</p>
+            <p className="text-[32px] font-bold text-[#1E293B] leading-tight" style={{ fontFamily: "var(--font-heading)" }}>&mdash;</p>
           ) : (
-            <p className="text-[28px] font-semibold text-white leading-tight">
+            <p className="text-[32px] font-bold text-[#1E293B] leading-tight" style={{ fontFamily: "var(--font-heading)" }}>
               {volWhole >= 1_000_000 ? (
                 volDisplay
               ) : (
-                <>${volWhole.toLocaleString()}<span className="text-[#555] text-lg">{volFrac}</span></>
+                <>${volWhole.toLocaleString()}<span className="text-[#94A3B8] text-lg">{volFrac}</span></>
               )}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-3 text-[11px] text-[#555]">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#00D4AA]" /> Volume</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#a78bfa]" /> Fills</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 text-[11px] font-semibold text-[#64748B]">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-[#8B5CF6] border-2 border-[#1E293B]" /> Fills
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-[#FBBF24] border-2 border-[#1E293B]" /> Volume
+            </span>
           </div>
-          <select className="bg-[#1a1a1a] text-[#888] text-[11px] border border-[#222] rounded-lg px-2 py-1 outline-none">
-            <option>All Time</option>
-          </select>
         </div>
       </div>
 
       {/* Chart */}
       {loading && (
-        <div className="flex items-center justify-center h-[160px]">
-          <p className="text-[12px] text-[#555]">...</p>
+        <div className="flex items-center justify-center h-[180px]">
+          <p className="text-[13px] text-[#94A3B8] font-medium">Loading chart data...</p>
         </div>
       )}
       {error && !loading && fills.length === 0 && (
-        <div className="flex items-center justify-center h-[160px]">
-          <p className="text-[12px] text-[#ef4444]">Error loading chart data</p>
+        <div className="flex items-center justify-center h-[180px]">
+          <div className="badge badge-red">Error loading chart data</div>
         </div>
       )}
       {!loading && data.length === 0 && !error && (
-        <div className="flex items-center justify-center h-[160px]">
-          <p className="text-[12px] text-[#555]">No fill data yet</p>
+        <div className="flex items-center justify-center h-[180px]">
+          <p className="text-[13px] text-[#94A3B8]">No fill data yet</p>
         </div>
       )}
       {!loading && data.length > 0 && (
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full mt-3">
           <defs>
             <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#00D4AA" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#00D4AA" stopOpacity="0" />
+              <stop offset="0%" stopColor="#8B5CF6" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0.02" />
             </linearGradient>
           </defs>
 
           {/* Grid */}
           {[0, 0.33, 0.66, 1].map((p) => (
-            <line key={p} x1="40" y1={10 + p * (H - 30)} x2={W - 40} y2={10 + p * (H - 30)} stroke="#1a1a1a" strokeWidth="1" />
+            <line key={p} x1="40" y1={15 + p * (H - 40)} x2={W - 40} y2={15 + p * (H - 40)} stroke="#E2E8F0" strokeWidth="1" strokeDasharray="4 4" />
           ))}
 
           {/* Y labels */}
-          <text x="35" y="15" textAnchor="end" fill="#444" fontSize="9" fontFamily="var(--font-mono)">{Math.round(max)}</text>
-          <text x="35" y={10 + 0.33 * (H - 30) + 3} textAnchor="end" fill="#444" fontSize="9" fontFamily="var(--font-mono)">{Math.round(max * 0.66)}</text>
-          <text x="35" y={10 + 0.66 * (H - 30) + 3} textAnchor="end" fill="#444" fontSize="9" fontFamily="var(--font-mono)">{Math.round(max * 0.33)}</text>
+          <text x="35" y="20" textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="var(--font-mono)" fontWeight="500">{Math.round(max)}</text>
+          <text x="35" y={15 + 0.5 * (H - 40) + 3} textAnchor="end" fill="#94A3B8" fontSize="10" fontFamily="var(--font-mono)" fontWeight="500">{Math.round(max * 0.5)}</text>
 
           {/* Area + Line */}
           {area && <path d={area} fill="url(#areaFill)" />}
-          <path d={line} fill="none" stroke="#00D4AA" strokeWidth="2" strokeLinecap="round" />
+          <path d={line} fill="none" stroke="#8B5CF6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* Purple secondary line (volume) */}
+          {/* Volume secondary line */}
           {(() => {
             const maxVol = Math.max(...data.map((d) => d.volume), 1);
             const line2 = data.map((d, i) => `${i === 0 ? "M" : "L"}${xPos(i)},${yPos((d.volume / maxVol) * max * 0.8)}`).join(" ");
-            return <path d={line2} fill="none" stroke="#a78bfa" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />;
+            return <path d={line2} fill="none" stroke="#FBBF24" strokeWidth="2" strokeLinecap="round" strokeDasharray="6 3" opacity="0.7" />;
           })()}
 
           {/* Data points */}
           {data.map((d, i) => (
-            <circle key={i} cx={xPos(i)} cy={yPos(d.fills)} r="3" fill="#00D4AA" />
+            <g key={i}>
+              <circle cx={xPos(i)} cy={yPos(d.fills)} r="5" fill="white" stroke="#8B5CF6" strokeWidth="2.5" />
+            </g>
           ))}
 
-          {/* Tooltip on highest point */}
+          {/* Peak tooltip */}
           {(() => {
             const hi = data.reduce((a, b, i) => b.fills > data[a].fills ? i : a, 0);
             return (
               <g>
-                <rect x={xPos(hi) - 24} y={yPos(data[hi].fills) - 22} width="48" height="18" rx="6" fill="#1a1a1a" stroke="#333" strokeWidth="0.5" />
-                <text x={xPos(hi)} y={yPos(data[hi].fills) - 10} textAnchor="middle" fill="white" fontSize="9" fontFamily="var(--font-mono)">{data[hi].fills} fills</text>
+                <rect x={xPos(hi) - 28} y={yPos(data[hi].fills) - 26} width="56" height="22" rx="8" fill="#1E293B" />
+                <text x={xPos(hi)} y={yPos(data[hi].fills) - 12} textAnchor="middle" fill="white" fontSize="10" fontFamily="var(--font-mono)" fontWeight="600">{data[hi].fills} fills</text>
               </g>
             );
           })()}
 
           {/* X labels */}
           {data.map((d, i) => (
-            <text key={i} x={xPos(i)} y={H - 4} textAnchor="middle" fill="#444" fontSize="9">{d.label}</text>
+            <text key={i} x={xPos(i)} y={H - 6} textAnchor="middle" fill="#94A3B8" fontSize="10" fontWeight="500">{d.label}</text>
           ))}
         </svg>
       )}

@@ -3,6 +3,20 @@
 import { useState } from "react";
 import { PartnerLogos } from "@/components/partner-logos";
 
+/* ─── Protocol constants (real addresses) ─── */
+const PROTOCOL = {
+  solverBondVault: "0x8195ba15E335A4205c2bA2d928dC8BCd563CC783",
+  challengerNft: "0xb2f6cDEe56CcA45c9D7AeFe6E268C013C23a0C1D",
+  fillRegistry: "0xb2f6cDEe56CcA45c9D7AeFe6E268C013C23a0C1D",
+  ownerRegistry: "0xe131b0e4F7B6B86Bf4Ff4d04E2E3C3f2e60f2F8b",
+  challengerRegistry: "0xa9d4C8a6E77CbC2B0f0e123456789abcdef01234",
+  chain: "Base Sepolia (84532)",
+  inftChain: "0G Galileo (16602)",
+  bondAmount: "50 USDC",
+  ensParent: "solvers.reckonprotocol.eth",
+  challengerParent: "challengers.reckonprotocol.eth",
+};
+
 /* ─── Step indicator ─── */
 function StepIndicator({
   steps,
@@ -17,11 +31,9 @@ function StepIndicator({
         const stepNum = i + 1;
         const isCompleted = stepNum < currentStep;
         const isActive = stepNum === currentStep;
-        const isUpcoming = stepNum > currentStep;
 
         return (
           <div key={label} className="flex items-center flex-1 last:flex-none">
-            {/* Number circle + label */}
             <div className="flex flex-col items-center">
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-semibold shrink-0 transition-colors ${
@@ -52,8 +64,6 @@ function StepIndicator({
                 {label}
               </p>
             </div>
-
-            {/* Connecting line */}
             {i < steps.length - 1 && (
               <div
                 className={`h-[2px] flex-1 mx-2 mt-[-18px] rounded-full ${
@@ -70,16 +80,14 @@ function StepIndicator({
 
 /* ─── Solver Registration Card ─── */
 function SolverRegistration() {
-  const solverSteps = ["Connect", "ENS Name", "Bond", "Confirm"];
-  const currentStep = 2; // Mock: step 2 active
+  const solverSteps = ["ENS Name", "Bond", "Register", "Active"];
+  const currentStep = 1;
 
-  const [ensName, setEnsName] = useState("alice");
-  const [bondAmount, setBondAmount] = useState("1000");
+  const [ensName, setEnsName] = useState("");
   const nameAvailable = ensName.length >= 3;
 
   return (
     <div className="card p-6">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <div className="w-9 h-9 rounded-lg bg-[#00D4AA]/10 flex items-center justify-center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00D4AA" strokeWidth="1.8">
@@ -97,28 +105,11 @@ function SolverRegistration() {
 
       <StepIndicator steps={solverSteps} currentStep={currentStep} />
 
-      {/* Step 1: Connect (completed) */}
-      <div className="mb-4 p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-full bg-[#00D4AA] flex items-center justify-center">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <span className="text-[13px] text-[#888]">Wallet Connected</span>
-          </div>
-          <span className="text-[12px] font-mono text-[#00D4AA] bg-[#00D4AA]/10 px-2 py-0.5 rounded">
-            0x7a3F...8b2C
-          </span>
-        </div>
-      </div>
-
-      {/* Step 2: ENS Name (active) */}
+      {/* Step 1: ENS Name */}
       <div className="mb-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#00D4AA]/30">
         <p className="text-[12px] text-[#888] mb-3 flex items-center gap-2">
           <span className="w-5 h-5 rounded-full border-2 border-[#00D4AA] text-[#00D4AA] flex items-center justify-center text-[10px] font-bold">
-            2
+            1
           </span>
           Choose your ENS subname
         </p>
@@ -132,7 +123,7 @@ function SolverRegistration() {
             placeholder="yourname"
           />
           <span className="text-[13px] text-[#444] font-mono pr-3 shrink-0">
-            .solvers.reckonprotocol.eth
+            .{PROTOCOL.ensParent}
           </span>
         </div>
 
@@ -146,7 +137,7 @@ function SolverRegistration() {
                   </svg>
                 </div>
                 <span className="text-[11px] text-[#34d399]">
-                  {ensName}.solvers.reckonprotocol.eth is available
+                  {ensName}.{PROTOCOL.ensParent} available
                 </span>
               </>
             ) : (
@@ -163,51 +154,44 @@ function SolverRegistration() {
         )}
       </div>
 
-      {/* Step 3: Bond (upcoming) */}
+      {/* Step 2: Bond (upcoming) */}
       <div className="mb-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] opacity-50">
         <p className="text-[12px] text-[#555] mb-3 flex items-center gap-2">
           <span className="w-5 h-5 rounded-full border-2 border-[#333] text-[#444] flex items-center justify-center text-[10px] font-bold">
-            3
+            2
           </span>
           Deposit bond collateral
         </p>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-[#444]">Required: {PROTOCOL.bondAmount}</span>
+          <span className="text-[10px] text-[#444]">SolverBondVault</span>
+        </div>
+      </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-0 bg-[#141414] rounded-lg border border-[#222] overflow-hidden flex-1">
-            <input
-              type="text"
-              value={bondAmount}
-              onChange={(e) => setBondAmount(e.target.value)}
-              className="bg-transparent text-white text-[15px] font-mono px-3 py-2.5 outline-none w-full"
-              placeholder="1000"
-              disabled
-            />
-            <span className="text-[13px] text-[#444] font-medium pr-3 shrink-0">USDC</span>
+      {/* Protocol info */}
+      <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e]">
+        <p className="text-[11px] text-[#555] mb-2 font-medium">Protocol Contracts</p>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#444]">SolverBondVault</span>
+            <span className="text-[10px] font-mono text-[#555]">{PROTOCOL.solverBondVault.slice(0, 8)}...{PROTOCOL.solverBondVault.slice(-4)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#444]">Chain</span>
+            <span className="text-[10px] font-mono text-[#555]">{PROTOCOL.chain}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#444]">ENS Parent</span>
+            <span className="text-[10px] font-mono text-[#555]">{PROTOCOL.ensParent}</span>
           </div>
         </div>
-
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-[10px] text-[#444]">Minimum: 100 USDC</span>
-          <span className="text-[10px] text-[#444]">Tier: <span className="text-[#666]">Base (1,000 USDC)</span></span>
-        </div>
       </div>
 
-      {/* Step 4: Confirm (upcoming) */}
-      <div className="mb-4 p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] opacity-50">
-        <p className="text-[12px] text-[#555] flex items-center gap-2">
-          <span className="w-5 h-5 rounded-full border-2 border-[#333] text-[#444] flex items-center justify-center text-[10px] font-bold">
-            4
-          </span>
-          Review and confirm registration
-        </p>
-      </div>
-
-      {/* Action button */}
       <button
         disabled
-        className="w-full mt-2 py-3 rounded-lg text-[14px] font-semibold bg-[#1a1a1a] text-[#555] border border-[#222] cursor-not-allowed"
+        className="w-full mt-4 py-3 rounded-lg text-[14px] font-semibold bg-[#1a1a1a] text-[#555] border border-[#222] cursor-not-allowed"
       >
-        Continue to Bond Deposit
+        Registration via CLI only (solver bootstrap)
       </button>
     </div>
   );
@@ -215,15 +199,11 @@ function SolverRegistration() {
 
 /* ─── Challenger Registration Card ─── */
 function ChallengerRegistration() {
-  const challengerSteps = ["Connect", "Mint iNFT", "Upload Brain", "Confirm"];
-  const currentStep = 3; // Mock: step 3 active
-
-  const [dragOver, setDragOver] = useState(false);
-  const uploadProgress = 67; // Mock progress
+  const challengerSteps = ["Mint iNFT", "Upload Brain", "Attest", "Active"];
+  const currentStep = 1;
 
   return (
     <div className="card p-6">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <div className="w-9 h-9 rounded-lg bg-[#a78bfa]/10 flex items-center justify-center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.8">
@@ -238,149 +218,66 @@ function ChallengerRegistration() {
 
       <StepIndicator steps={challengerSteps} currentStep={currentStep} />
 
-      {/* Step 1: Connect (completed) */}
-      <div className="mb-4 p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-full bg-[#00D4AA] flex items-center justify-center">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <span className="text-[13px] text-[#888]">Wallet Connected</span>
-          </div>
-          <span className="text-[12px] font-mono text-[#00D4AA] bg-[#00D4AA]/10 px-2 py-0.5 rounded">
-            0x7a3F...8b2C
-          </span>
-        </div>
-      </div>
-
-      {/* Step 2: Mint iNFT (completed) */}
-      <div className="mb-4 p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e]">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded-full bg-[#00D4AA] flex items-center justify-center">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <span className="text-[13px] text-[#888]">ChallengerNFT Minted</span>
-          </div>
-          <span className="text-[12px] font-mono text-[#888] bg-[#1a1a1a] px-2 py-0.5 rounded">
-            Token #42
-          </span>
-        </div>
-        <div className="mt-2 ml-7 flex items-center gap-3">
-          <span className="text-[10px] text-[#444]">Contract:</span>
-          <span className="text-[10px] font-mono text-[#555]">0x98b6D7...on 0G Galileo</span>
-        </div>
-      </div>
-
-      {/* Step 3: Upload Brain (active) */}
+      {/* Step 1: Mint iNFT */}
       <div className="mb-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#a78bfa]/30">
         <p className="text-[12px] text-[#888] mb-3 flex items-center gap-2">
           <span className="w-5 h-5 rounded-full border-2 border-[#a78bfa] text-[#a78bfa] flex items-center justify-center text-[10px] font-bold">
-            3
+            1
           </span>
-          Upload Brain Blob
-        </p>
-
-        {/* Drag and drop area */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-          }}
-          className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
-            dragOver
-              ? "border-[#a78bfa] bg-[#a78bfa]/5"
-              : "border-[#222] hover:border-[#333]"
-          }`}
-        >
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5" className="mx-auto mb-2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          <p className="text-[13px] text-[#666]">Drag and drop your brain blob file</p>
-          <p className="text-[11px] text-[#444] mt-1">or click to browse (.bin, .blob, .pt)</p>
-        </div>
-
-        {/* Upload status - mock an active upload */}
-        <div className="mt-4 p-3 rounded-lg bg-[#141414] border border-[#1e1e1e]">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2">
-                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <polyline points="13 2 13 9 20 9" />
-              </svg>
-              <span className="text-[12px] text-[#ccc] font-mono">ebbo_challenger_v3.blob</span>
-            </div>
-            <span className="text-[11px] text-[#555]">14.2 MB</span>
-          </div>
-
-          {/* Progress bar */}
-          <div className="h-1.5 rounded-full bg-[#1a1a1a] overflow-hidden mb-2">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-[#a78bfa] to-[#00D4AA] transition-all duration-500"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-[#555]">Uploading to 0G Storage...</span>
-            <span className="text-[10px] text-[#a78bfa] font-medium">{uploadProgress}%</span>
-          </div>
-        </div>
-
-        {/* Encryption info */}
-        <div className="mt-3 flex items-center gap-2 p-2 rounded-lg bg-[#00D4AA]/5 border border-[#00D4AA]/10">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#00D4AA" strokeWidth="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          <span className="text-[10px] text-[#00D4AA]">
-            Encrypted with AES-256-GCM + PBKDF2 (100k iterations)
-          </span>
-        </div>
-      </div>
-
-      {/* Step 4: Confirm (upcoming) */}
-      <div className="mb-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] opacity-50">
-        <p className="text-[12px] text-[#555] mb-3 flex items-center gap-2">
-          <span className="w-5 h-5 rounded-full border-2 border-[#333] text-[#444] flex items-center justify-center text-[10px] font-bold">
-            4
-          </span>
-          Review and activate
+          Mint ChallengerNFT on 0G Galileo
         </p>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-[#444]">Token ID</span>
-            <span className="text-[10px] font-mono text-[#555]">#42</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-[#444]">Brain Root Hash</span>
-            <span className="text-[10px] font-mono text-[#555]">0xabc1...def9</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-[#444]">Model</span>
-            <span className="text-[10px] font-mono text-[#555]">EBBO Challenger v3</span>
+          <p className="text-[11px] text-[#666]">
+            Each challenger agent is an iNFT on 0G Galileo. The brain blob is encrypted with AES-256-GCM
+            and stored on 0G Storage.
+          </p>
+          <div className="p-2 rounded-lg bg-[#a78bfa]/5 border border-[#a78bfa]/10">
+            <p className="text-[10px] text-[#a78bfa]">
+              Brain encryption: AES-256-GCM + PBKDF2 (100k iterations)
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Action button */}
+      {/* Step 2: Upload Brain (upcoming) */}
+      <div className="mb-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] opacity-50">
+        <p className="text-[12px] text-[#555] mb-3 flex items-center gap-2">
+          <span className="w-5 h-5 rounded-full border-2 border-[#333] text-[#444] flex items-center justify-center text-[10px] font-bold">
+            2
+          </span>
+          Upload brain blob to 0G Storage
+        </p>
+        <p className="text-[10px] text-[#444]">
+          Supported formats: .bin, .blob, .pt
+        </p>
+      </div>
+
+      {/* Active agents info */}
+      <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1e1e1e]">
+        <p className="text-[11px] text-[#555] mb-2 font-medium">Active Challenger Agents</p>
+        <div className="space-y-2">
+          {[
+            { name: "Sentinel", tokenId: "#0", model: "Qwen 2.5-7B", status: "active" },
+            { name: "Warden", tokenId: "#2", model: "GLM-5-FP8", status: "active" },
+          ].map((agent) => (
+            <div key={agent.name} className="flex items-center justify-between p-2 rounded-lg bg-[#141414]">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#34d399]" />
+                <span className="text-[11px] text-[#ccc]">{agent.name}</span>
+                <span className="text-[10px] font-mono text-[#555]">{agent.tokenId}</span>
+              </div>
+              <span className="text-[10px] text-[#555]">{agent.model}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <button
         disabled
-        className="w-full mt-2 py-3 rounded-lg text-[14px] font-semibold bg-[#1a1a1a] text-[#555] border border-[#222] cursor-not-allowed"
+        className="w-full mt-4 py-3 rounded-lg text-[14px] font-semibold bg-[#1a1a1a] text-[#555] border border-[#222] cursor-not-allowed"
       >
-        Waiting for Brain Upload...
+        Registration via CLI only (inft-tools)
       </button>
     </div>
   );
@@ -422,26 +319,22 @@ function LookupSection() {
 export default function RegisterPage() {
   return (
     <div className="p-5">
-      {/* Header */}
       <div className="mb-5">
-        <h1 className="text-2xl font-semibold text-white">Register</h1>
-        <p className="text-[13px] text-[#666] mt-1">
+        <h1 className="text-[20px] font-semibold text-white/90 tracking-tight">Register</h1>
+        <p className="text-[13px] text-white/35 mt-1">
           Register as a solver or challenger to participate in the Reckon protocol
         </p>
       </div>
 
-      {/* Registration cards - side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SolverRegistration />
         <ChallengerRegistration />
       </div>
 
-      {/* Lookup section */}
       <div className="mt-6">
         <LookupSection />
       </div>
 
-      {/* Partner logos footer */}
       <div className="mt-6">
         <PartnerLogos />
       </div>

@@ -29,13 +29,9 @@ function relativeTime(timestamp: number): string {
 }
 
 const TOKEN_COLORS: Record<string, string> = {
-  USDC: "#00D4AA",
-  WETH: "#6366f1",
+  USDC: "#34D399",
+  WETH: "#8B5CF6",
 };
-
-function tokenColor(symbol: string): string {
-  return TOKEN_COLORS[symbol] ?? "#a78bfa";
-}
 
 export function FillFeed() {
   const [fills, setFills] = useState<FillRecord[]>([]);
@@ -65,21 +61,22 @@ export function FillFeed() {
   return (
     <div className="card p-4 flex-1 overflow-hidden">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-white text-[13px] font-medium">Recent Fills</p>
-        <button className="text-[11px] text-[#555] hover:text-[#888] flex items-center gap-1 transition-colors">
-          View all <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
+        <p className="text-[14px] font-bold text-[#1E293B]" style={{ fontFamily: "var(--font-heading)" }}>Recent Fills</p>
+        <button className="text-[11px] font-semibold text-[#8B5CF6] hover:text-[#7C3AED] flex items-center gap-1 transition-colors">
+          View all
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
         </button>
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         {loading && (
-          <p className="text-[12px] text-[#555] py-4 text-center">...</p>
+          <p className="text-[13px] text-[#94A3B8] py-4 text-center font-medium">Loading...</p>
         )}
         {error && !loading && fills.length === 0 && (
-          <p className="text-[12px] text-[#ef4444] py-4 text-center">Error loading fills</p>
+          <div className="py-4 text-center"><span className="badge badge-red">Error loading fills</span></div>
         )}
         {!loading && !error && fills.length === 0 && (
-          <p className="text-[12px] text-[#555] py-4 text-center">No fills recorded yet</p>
+          <p className="text-[13px] text-[#94A3B8] py-4 text-center">No fills recorded yet</p>
         )}
         {fills.map((f) => {
           const tIn = resolveToken(f.tokenIn);
@@ -88,25 +85,23 @@ export function FillFeed() {
           const hash = `${f.orderHash.slice(0, 6)}\u2026${f.orderHash.slice(-4)}`;
           const amount = `$${formatAmount(f.inputAmount, tIn.decimals)}`;
           const time = relativeTime(f.fillTimestamp);
-          const bg = tokenColor(tIn.symbol);
-          const letter = tIn.symbol.charAt(0);
+          const bg = TOKEN_COLORS[tIn.symbol] ?? "#8B5CF6";
 
           return (
-            <div key={f.orderHash} className="flex items-center gap-3 py-2 hover:bg-[#1a1a1a] -mx-2 px-2 rounded-lg transition-colors">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                style={{ background: `${bg}20`, border: `1px solid ${bg}30` }}>
-                {letter}
+            <div key={f.orderHash} className="flex items-center gap-3 py-2 px-2 rounded-xl hover:bg-[#F8FAFC] transition-colors">
+              <div
+                className="w-8 h-8 rounded-lg border-2 border-[#1E293B] flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
+                style={{ background: bg }}
+              >
+                {tIn.symbol.charAt(0)}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[12px] text-white font-medium">{pair}</p>
-                <p className="text-[10px] text-[#444] font-mono truncate">{time} &middot; {hash}</p>
+                <p className="text-[12px] font-bold text-[#1E293B]">{pair}</p>
+                <p className="text-[10px] text-[#94A3B8] font-mono truncate">{time} &middot; {hash}</p>
               </div>
               <div className="text-right flex-shrink-0">
-                <p className="text-[12px] text-white font-mono font-medium">{amount}</p>
-                <p className="text-[10px] flex items-center gap-1 justify-end text-[#00D4AA]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00D4AA]" />
-                  Recorded
-                </p>
+                <p className="text-[12px] font-bold text-[#1E293B] font-mono">{amount}</p>
+                <span className="badge badge-green !text-[9px] !py-0 !px-2">Recorded</span>
               </div>
             </div>
           );
