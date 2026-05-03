@@ -1,7 +1,0 @@
-{
-  "PrivateKeyPath": "/Users/sakshishah/Desktop/web3/hackathons/Reckon/multi-agent/keys/axl-identity-1.pem",
-  "Peers": [],
-  "Listen": ["tls://127.0.0.1:9001"],
-  "api_port": 9002,
-  "tcp_port": 7000
-}

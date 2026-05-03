@@ -53,14 +53,8 @@ node_modules/
 .env.*
 !.env.example
 
-# Multi-agent runtime
-multi-agent/keys/
-multi-agent/logs/
-multi-agent/axl/
-multi-agent/axl-pids.txt
-multi-agent/axl-pubkeys.env
-multi-agent/contracts.env
-multi-agent/provision-data.json
+# Multi-agent (local deployment configs)
+multi-agent/
 
 # Agent AXL keys
 agent/*/axl-identity.pem
