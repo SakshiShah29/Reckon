@@ -32,12 +32,19 @@ export interface ChallengeRecord {
 export interface SlashDocRecord {
   orderHash: `0x${string}`;
   solverNamehash: `0x${string}`;
+  solverEnsName?: string;
+  solverAddress?: string;
+  reputationPenalty?: string;
   challengerNamehash: `0x${string}`;
   agentTokenId: string;
   slashAmount: string;
   swapperRestitution: string;
   ownerBounty: string;
   protocolCut: string;
+  swapperAddress?: string;
+  ownerAddress?: string;
+  protocolAddress?: string;
+  challengerBond?: string;
   nlExplanation?: string;
   timestamp: number;
   txHash: `0x${string}`;

@@ -216,7 +216,8 @@ export async function coordinate(
       : createNoopTransport();
 
   // Jitter based on agentTokenId to stagger KV writes and avoid double-claims
-  const jitterMs = (parseInt(agentTokenId, 10) % 5) * 2000 + Math.random() * 1000;
+  // Use 5s spacing per agent so KV writes don't overlap (0G KV replication takes ~1-2s)
+  const jitterMs = (parseInt(agentTokenId, 10) % 5) * 5000 + Math.random() * 1000;
   console.log(`[coordinate] Jitter: ${Math.round(jitterMs)}ms before acquire`);
   await sleep(jitterMs);
 
@@ -243,6 +244,8 @@ export async function coordinate(
     };
   }
 
+  console.log(`[coordinate] claim :`,claim);
+
   // 1. Broadcast via AXL (fast, ephemeral)
   await transport.broadcastClaim(claim);
 
@@ -253,7 +256,7 @@ export async function coordinate(
     agentTokenId,
     AXL_BACKOFF_SECONDS * 1000,
   );
-
+console.log(`[coordinate] poll result: lostTo=${lostTo}`);
   if (lostTo) {
     return {
       claimAcquired: false,
@@ -295,15 +298,20 @@ export async function coordinate(
     const [_result, err] = await (batcher as any).exec();
     if (err) throw err;
 
-    // 5. Read-after-write: verify we won the KV race
-    await sleep(1000);
-    const verifyResult = await checkClaim(config, keyBytes, KvClient);
-    if (verifyResult.claimedBy && verifyResult.claimedBy !== agentTokenId) {
-      return {
-        claimAcquired: false,
-        claimedBy: verifyResult.claimedBy,
-        reason: "kv_race_lost",
-      };
+    // 5. Read-after-write: verify we won the KV race (multiple checks to handle eventual consistency)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await sleep(2000);
+      const verifyResult = await checkClaim(config, keyBytes, KvClient);
+      if (verifyResult.claimedBy && verifyResult.claimedBy !== agentTokenId) {
+        console.log(
+          `[coordinate] KV race lost on verify attempt ${attempt + 1} — claimed by ${verifyResult.claimedBy}`,
+        );
+        return {
+          claimAcquired: false,
+          claimedBy: verifyResult.claimedBy,
+          reason: "kv_race_lost",
+        };
+      }
     }
 
     return {

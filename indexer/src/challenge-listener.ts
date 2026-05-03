@@ -47,6 +47,14 @@ const RoyaltyPaidEvent = parseAbiItem(
   "event RoyaltyPaid(uint256 indexed tokenId, address indexed swapper, uint256 swapperAmt, uint256 ownerAmt, uint256 protocolAmt)",
 );
 
+const BondSlashedEvent = parseAbiItem(
+  "event BondSlashed(bytes32 indexed node, uint256 amount, address to)",
+);
+
+const ERC20TransferEvent = parseAbiItem(
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+);
+
 // ── ABI for SolverRegistry.setText() ────────────────────────────
 
 const SetTextABI = [
@@ -176,47 +184,62 @@ export async function startChallengeListener(
             tx: logEntry.transactionHash,
           });
 
-          // Parse the tx receipt to get ChallengeSubmitted (agentTokenId) and RoyaltyPaid (actual split)
+          // Parse the tx receipt to get ChallengeSubmitted, RoyaltyPaid, BondSlashed, and ERC20 Transfers
           let agentTokenId = "";
           let challengerBond = 0n;
           let royaltySwapper = 0n;
           let royaltyOwner = 0n;
           let royaltyProtocol = 0n;
+          let royaltySwapperAddr = "";
           let challengerAddress = "";
+          // Per-recipient ERC20 Transfer tx evidence (logIndex within the same tx)
+          const transferLogs: Array<{ from: string; to: string; value: string; logIndex: number }> = [];
           try {
             const receipt = await publicClient.getTransactionReceipt({ hash: logEntry.transactionHash });
             challengerAddress = receipt.from;
             for (const rxLog of receipt.logs) {
+              // Parse ChallengeSubmitted
               try {
-                // Try ChallengeSubmitted
-                const submittedTopicHash = "0xe78dcfab"; // first 4 bytes not needed for topic matching
-                if (rxLog.topics[0] === "0x" + "e78dcfab" + "0".repeat(56)) continue; // skip — use full keccak below
-                // Parse all logs against ChallengeSubmitted
-                                try {
-                  const decoded = decodeEventLog({
-                    abi: [ChallengeSubmittedEvent],
-                    data: rxLog.data,
-                    topics: rxLog.topics,
+                const decoded = decodeEventLog({
+                  abi: [ChallengeSubmittedEvent],
+                  data: rxLog.data,
+                  topics: rxLog.topics,
+                });
+                if (decoded.eventName === "ChallengeSubmitted") {
+                  agentTokenId = decoded.args.agentTokenId.toString();
+                  challengerBond = decoded.args.challengerBond;
+                }
+              } catch { /* not this event */ }
+              // Parse RoyaltyPaid
+              try {
+                const decoded = decodeEventLog({
+                  abi: [RoyaltyPaidEvent],
+                  data: rxLog.data,
+                  topics: rxLog.topics,
+                });
+                if (decoded.eventName === "RoyaltyPaid") {
+                  royaltySwapper = decoded.args.swapperAmt;
+                  royaltyOwner = decoded.args.ownerAmt;
+                  royaltyProtocol = decoded.args.protocolAmt;
+                  royaltySwapperAddr = decoded.args.swapper;
+                }
+              } catch { /* not this event */ }
+              // Parse ERC20 Transfer events (USDC movements)
+              try {
+                const decoded = decodeEventLog({
+                  abi: [ERC20TransferEvent],
+                  data: rxLog.data,
+                  topics: rxLog.topics,
+                });
+                if (decoded.eventName === "Transfer") {
+                  transferLogs.push({
+                    from: decoded.args.from,
+                    to: decoded.args.to,
+                    value: decoded.args.value.toString(),
+                    logIndex: Number(rxLog.logIndex),
                   });
-                  if (decoded.eventName === "ChallengeSubmitted") {
-                    agentTokenId = decoded.args.agentTokenId.toString();
-                    challengerBond = decoded.args.challengerBond;
-                  }
-                } catch { /* not this event */ }
-                // Parse RoyaltyPaid
-                try {
-                  const decoded = decodeEventLog({
-                    abi: [RoyaltyPaidEvent],
-                    data: rxLog.data,
-                    topics: rxLog.topics,
-                  });
-                  if (decoded.eventName === "RoyaltyPaid") {
-                    royaltySwapper = decoded.args.swapperAmt;
-                    royaltyOwner = decoded.args.ownerAmt;
-                    royaltyProtocol = decoded.args.protocolAmt;
-                  }
-                } catch { /* not this event */ }
-              } catch { /* skip unparseable log */ }
+                }
+              } catch { /* not this event */ }
             }
           } catch (err) {
             log.warn(`${tag} Failed to parse tx receipt for extra data: ${err}`);
@@ -234,6 +257,12 @@ export async function startChallengeListener(
           // Look up original fill for context
           const fill = await fills.findOne({ orderHash });
 
+          // Compute benchmarkOutput from fill data:
+          // The EBBO benchmark expected output ≈ actualOutput + shortfall
+          // shortfall = slashAmount (capped at solverBond, but best approximation)
+          const actualOutput = fill?.outputAmount ?? "0";
+          const computedBenchmark = (BigInt(actualOutput) + slashAmount).toString();
+
           // Write to challenges collection
           await db.collection(MONGO_COLLECTIONS.challenges).updateOne(
             { orderHash, challengerNamehash: challengerNode },
@@ -243,8 +272,8 @@ export async function startChallengeListener(
                 challengerAddress: challengerAddress || challengerNode,
                 challengerNamehash: challengerNode,
                 agentTokenId,
-                benchmarkOutput: (fill as Record<string, unknown>)?.benchmarkOutput as string ?? "",
-                actualOutput: fill?.outputAmount ?? "",
+                benchmarkOutput: computedBenchmark,
+                actualOutput,
                 eboToleranceBps: fill?.eboToleranceBps ?? 0,
                 succeeded: true,
                 slashAmount: slashAmount.toString(),
@@ -262,12 +291,35 @@ export async function startChallengeListener(
           const ownerBounty = royaltyOwner > 0n ? royaltyOwner : (slashAmount * 3000n) / 10000n;
           const protocolCut = royaltyProtocol > 0n ? royaltyProtocol : slashAmount - swapperRestitution - ownerBounty;
 
+          // Match ERC20 Transfer events to split recipients by amount
+          const findTransferTo = (amount: bigint) =>
+            transferLogs.find((t) => t.value === amount.toString());
+          const swapperTransfer = findTransferTo(swapperRestitution);
+          const ownerTransfer = findTransferTo(ownerBounty);
+          const protocolTransfer = findTransferTo(protocolCut);
+
+          // Resolve solver ENS label + linked address from subnames collection
+          let solverEnsName = "";
+          let solverAddress = "";
+          try {
+            const subname = await db.collection("subnames").findOne({ namehash: fillerNamehash });
+            if (subname?.label && subname?.namespace) {
+              solverEnsName = `${subname.label}.${subname.namespace}.reckonprotocol.eth`;
+            }
+            if (subname?.owner) {
+              solverAddress = subname.owner;
+            }
+          } catch { /* subname lookup failed, use namehash */ }
+
           await db.collection(MONGO_COLLECTIONS.slashes).updateOne(
             { orderHash },
             {
               $set: {
                 orderHash,
                 solverNamehash: fillerNamehash,
+                solverEnsName,
+                solverAddress,
+                reputationPenalty: REP_PENALTY.toString(),
                 challengerNamehash: challengerNode,
                 agentTokenId,
                 slashAmount: slashAmount.toString(),
@@ -275,6 +327,10 @@ export async function startChallengeListener(
                 ownerBounty: ownerBounty.toString(),
                 protocolCut: protocolCut.toString(),
                 challengerBond: challengerBond.toString(),
+                // Per-recipient addresses from on-chain Transfer events
+                swapperAddress: swapperTransfer?.to ?? royaltySwapperAddr ?? "",
+                ownerAddress: ownerTransfer?.to ?? "",
+                protocolAddress: protocolTransfer?.to ?? "",
                 nlExplanation: "",
                 timestamp: Math.floor(Date.now() / 1000),
                 txHash: logEntry.transactionHash,

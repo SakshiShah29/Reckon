@@ -37,15 +37,46 @@ export async function getRecentChallenges(limit = 50): Promise<ChallengeRecord[]
 
 /**
  * Fetches recent slashes, sorted by timestamp descending.
+ * Enriches with solver ENS name + address from subnames collection if missing.
  */
-export async function getRecentSlashes(limit = 50): Promise<SlashDocRecord[]> {
+export async function getRecentSlashes(limit = 50) {
   const db = await getDb();
-  return db
+  const slashes = await db
     .collection<SlashDocRecord>(MONGO_COLLECTIONS.slashes)
     .find({})
     .sort({ timestamp: -1 })
     .limit(limit)
     .toArray();
+
+  // Collect namehashes that need ENS resolution
+  const needsResolve = slashes.filter(
+    (s) => s.solverNamehash && !s.solverEnsName,
+  );
+  if (needsResolve.length > 0) {
+    const hashes = [...new Set(needsResolve.map((s) => s.solverNamehash))];
+    const subnames = await db
+      .collection("subnames")
+      .find({ namehash: { $in: hashes } })
+      .toArray();
+    const lookup = new Map(
+      subnames.map((s) => [
+        s.namehash as string,
+        {
+          ensName: `${s.label}.${s.namespace}.reckonprotocol.eth`,
+          address: (s.owner as string) ?? "",
+        },
+      ]),
+    );
+    for (const slash of slashes) {
+      if (!slash.solverEnsName && lookup.has(slash.solverNamehash)) {
+        const info = lookup.get(slash.solverNamehash)!;
+        slash.solverEnsName = info.ensName;
+        slash.solverAddress = info.address;
+      }
+    }
+  }
+
+  return slashes;
 }
 
 /**
