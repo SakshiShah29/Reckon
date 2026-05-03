@@ -9,6 +9,9 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { getAttestationsCollection } from "./db.js";
 import type { OwnerAttestation } from "@reckon-protocol/types";
+import { createLogger, formatDuration } from "./logger.js";
+
+const log = createLogger("owner-attester");
 
 /**
  * 0G Galileo testnet chain definition.
@@ -87,18 +90,27 @@ export async function startOwnerAttester(
 
   const account = privateKeyToAccount(config.relayerPrivateKey);
 
+  const baseChain = config.useBaseSepolia ? baseSepolia : base;
   const baseWalletClient = createWalletClient({
-    chain: config.useBaseSepolia ? baseSepolia : base,
+    chain: baseChain,
     transport: http(config.baseRpcUrl),
     account,
   });
 
-  console.log(`[owner-attester] Watching ChallengerNFT transfers on Galileo`);
-  console.log(`[owner-attester] NFT: ${config.challengerNftAddress}`);
-  console.log(`[owner-attester] OwnerRegistry: ${config.ownerRegistryAddress}`);
+  log.info("Starting NFT transfer watcher", {
+    nftContract: config.challengerNftAddress,
+    ownerRegistry: config.ownerRegistryAddress,
+    galileoRpc: config.galileoRpcUrl,
+    baseChain: baseChain.name,
+  });
 
   let isRunning = true;
   let lastProcessedBlock = await galileoClient.getBlockNumber();
+  let totalTransfers = 0;
+
+  log.info("Polling from Galileo block", {
+    startBlock: lastProcessedBlock.toString(),
+  });
 
   const poll = async () => {
     while (isRunning) {
@@ -109,19 +121,33 @@ export async function startOwnerAttester(
           continue;
         }
 
+        const from = lastProcessedBlock + 1n;
+        const to = currentBlock;
+
         const logs = await galileoClient.getLogs({
           address: config.challengerNftAddress,
           event: TRANSFER_EVENT,
-          fromBlock: lastProcessedBlock + 1n,
-          toBlock: currentBlock,
+          fromBlock: from,
+          toBlock: to,
         });
 
-        for (const log of logs) {
-          const to = log.args.to!;
-          const tokenId = log.args.tokenId!;
+        if (logs.length > 0) {
+          log.info(`Found ${logs.length} NFT Transfer event(s) in Galileo blocks ${from}..${to}`);
+        }
+
+        for (const logEntry of logs) {
+          const startTime = Date.now();
+          const to = logEntry.args.to!;
+          const tokenId = logEntry.args.tokenId!;
           const tag = `token#${tokenId}`;
 
-          console.log(`[owner-attester] ${tag} transferred to ${to}`);
+          totalTransfers++;
+          log.info(`${tag} NFT transferred`, {
+            from: logEntry.args.from ?? "0x0",
+            to,
+            block: logEntry.blockNumber.toString(),
+            tx: logEntry.transactionHash,
+          });
 
           // Call OwnerRegistry.attestOwner() on Base
           try {
@@ -131,7 +157,10 @@ export async function startOwnerAttester(
               functionName: "attestOwner",
               args: [tokenId, to],
             });
-            console.log(`[owner-attester] ${tag} attested on Base: ${txHash.slice(0, 10)}...`);
+            log.info(`${tag} ownership attested on ${baseChain.name}`, {
+              attestTx: txHash,
+              owner: to,
+            });
 
             // Write to MongoDB
             const attestation: OwnerAttestation = {
@@ -147,15 +176,21 @@ export async function startOwnerAttester(
               { $set: attestation },
               { upsert: true },
             );
-            console.log(`[owner-attester] ${tag} written to MongoDB`);
+            log.info(`${tag} attestation saved to MongoDB`, {
+              duration: formatDuration(Date.now() - startTime),
+              totalTransfers,
+            });
           } catch (err) {
-            console.error(`[owner-attester] ${tag} attestation failed:`, err);
+            log.error(`${tag} attestation FAILED`, err, {
+              tokenId: tokenId.toString(),
+              newOwner: to,
+            });
           }
         }
 
         lastProcessedBlock = currentBlock;
       } catch (err) {
-        console.error("[owner-attester] Poll error:", err);
+        log.error("Poll cycle error (will retry in 5s)", err);
       }
 
       await sleep(5000);
@@ -163,12 +198,12 @@ export async function startOwnerAttester(
   };
 
   poll().catch((err) =>
-    console.error("[owner-attester] Fatal poll error:", err),
+    log.error("Fatal poll error — owner attester stopped", err),
   );
 
   return () => {
     isRunning = false;
-    console.log("[owner-attester] Stopped");
+    log.info("Owner attester stopped", { totalTransfers });
   };
 }
 

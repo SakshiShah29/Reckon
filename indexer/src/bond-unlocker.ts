@@ -7,6 +7,9 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { getFillsCollection } from "./db.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("bond-unlocker");
 
 const base = defineChain({
   id: 8453,
@@ -78,14 +81,20 @@ export async function startBondUnlocker(
     account,
   });
 
-  console.log(`[bond-unlocker] Started — sweeping every 30s`);
-  console.log(`[bond-unlocker] FillRegistry: ${config.fillRegistryAddress}`);
+  log.info("Starting bond unlocker sweep", {
+    fillRegistry: config.fillRegistryAddress,
+    chain: chain.name,
+    interval: "30s",
+  });
 
   let isRunning = true;
+  let totalFinalized = 0;
+  let sweepCount = 0;
 
   const sweep = async () => {
     while (isRunning) {
       try {
+        sweepCount++;
         const currentBlock = Number(await publicClient.getBlockNumber());
         const collection = await getFillsCollection();
 
@@ -100,11 +109,14 @@ export async function startBondUnlocker(
           .toArray();
 
         if (expiredFills.length > 0) {
-          console.log(`[bond-unlocker] Found ${expiredFills.length} expired fill(s) to finalize`);
+          log.info(`Found ${expiredFills.length} expired fill(s) to finalize`, {
+            currentBlock,
+            sweepCount,
+          });
         }
 
         for (const fill of expiredFills) {
-          const tag = fill.orderHash.slice(0, 10);
+          const tag = fill.orderHash;
           try {
             const txHash = await walletClient.writeContract({
               address: config.fillRegistryAddress,
@@ -112,7 +124,15 @@ export async function startBondUnlocker(
               functionName: "finalizeFill",
               args: [fill.orderHash as `0x${string}`],
             });
-            console.log(`[bond-unlocker] ${tag} finalized: ${txHash.slice(0, 10)}...`);
+
+            totalFinalized++;
+            log.info(`${tag} bond finalized`, {
+              finalizeTx: txHash,
+              fillBlock: fill.fillBlock,
+              challengeDeadline: fill.challengeDeadline,
+              currentBlock,
+              totalFinalized,
+            });
 
             // Mark as finalized in MongoDB so we don't retry
             await collection.updateOne(
@@ -123,18 +143,23 @@ export async function startBondUnlocker(
             const reason = err?.shortMessage ?? err?.message ?? "unknown";
             // If it fails with CounterUnderflow or AlreadySlashed, mark as finalized anyway
             if (reason.includes("0x") || reason.includes("revert")) {
-              console.warn(`[bond-unlocker] ${tag} already finalized or slashed, marking done`);
+              log.warn(`${tag} already finalized or slashed on-chain — marking done`, {
+                reason,
+              });
               await collection.updateOne(
                 { orderHash: fill.orderHash },
                 { $set: { finalized: true } },
               );
             } else {
-              console.warn(`[bond-unlocker] ${tag} finalize failed: ${reason}`);
+              log.warn(`${tag} finalize tx FAILED: ${reason}`, {
+                fillBlock: fill.fillBlock,
+                currentBlock,
+              });
             }
           }
         }
       } catch (err) {
-        console.error("[bond-unlocker] Sweep error:", err);
+        log.error("Sweep cycle error (will retry in 30s)", err);
       }
 
       await sleep(30_000);
@@ -142,12 +167,12 @@ export async function startBondUnlocker(
   };
 
   sweep().catch((err) =>
-    console.error("[bond-unlocker] Fatal sweep error:", err),
+    log.error("Fatal sweep error — bond unlocker stopped", err),
   );
 
   return () => {
     isRunning = false;
-    console.log("[bond-unlocker] Stopped");
+    log.info("Bond unlocker stopped", { totalFinalized, sweepCount });
   };
 }
 

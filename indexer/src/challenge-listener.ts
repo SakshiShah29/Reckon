@@ -10,6 +10,9 @@ import { privateKeyToAccount } from "viem/accounts";
 import { getFillsCollection } from "./db.js";
 import { getDb } from "./db.js";
 import { MONGO_COLLECTIONS } from "@reckon-protocol/types";
+import { createLogger, formatDuration } from "./logger.js";
+
+const log = createLogger("challenge-listener");
 
 const base = defineChain({
   id: 8453,
@@ -100,10 +103,16 @@ export async function startChallengeListener(
     account,
   });
 
-  console.log(`[challenge-listener] Watching Challenger at ${config.challengerAddress}`);
+  log.info("Starting challenge listener", {
+    challenger: config.challengerAddress,
+    chain: chain.name,
+    solverRegistry: config.solverRegistryAddress,
+  });
 
   let isRunning = true;
   let lastProcessedBlock = await publicClient.getBlockNumber();
+  let totalSucceeded = 0;
+  let totalFailed = 0;
 
   const poll = async () => {
     while (isRunning) {
@@ -133,15 +142,30 @@ export async function startChallengeListener(
           }),
         ]);
 
-        // ── Handle successful challenges (solver was bad) ─────────
-        for (const log of successLogs) {
-          const orderHash = log.args.orderHash!;
-          const fillerNamehash = log.args.fillerNamehash!;
-          const challengerNode = log.args.challengerNode!;
-          const slashAmount = log.args.slashAmount!;
-          const tag = orderHash.slice(0, 10);
+        if (successLogs.length > 0 || failLogs.length > 0) {
+          log.info(`Found challenge events in blocks ${from}..${to}`, {
+            succeeded: successLogs.length,
+            failed: failLogs.length,
+          });
+        }
 
-          console.log(`[challenge-listener] ${tag} ChallengeSucceeded — slashed ${slashAmount}`);
+        // ── Handle successful challenges (solver was bad) ─────────
+        for (const logEntry of successLogs) {
+          const startTime = Date.now();
+          const orderHash = logEntry.args.orderHash!;
+          const fillerNamehash = logEntry.args.fillerNamehash!;
+          const challengerNode = logEntry.args.challengerNode!;
+          const slashAmount = logEntry.args.slashAmount!;
+          const tag = orderHash;
+
+          totalSucceeded++;
+          log.info(`${tag} CHALLENGE SUCCEEDED — solver slashed`, {
+            slashAmount: slashAmount.toString(),
+            fillerNamehash,
+            challengerNode,
+            block: logEntry.blockNumber.toString(),
+            tx: logEntry.transactionHash,
+          });
 
           const db = await getDb();
           const fills = await getFillsCollection();
@@ -169,9 +193,9 @@ export async function startChallengeListener(
                 eboToleranceBps: fill?.eboToleranceBps ?? 0,
                 succeeded: true,
                 slashAmount: slashAmount.toString(),
-                challengeBlock: Number(log.blockNumber),
+                challengeBlock: Number(logEntry.blockNumber),
                 challengeTimestamp: Math.floor(Date.now() / 1000),
-                txHash: log.transactionHash,
+                txHash: logEntry.transactionHash,
               },
             },
             { upsert: true },
@@ -196,26 +220,44 @@ export async function startChallengeListener(
                 protocolCut: protocolCut.toString(),
                 nlExplanation: "",
                 timestamp: Math.floor(Date.now() / 1000),
-                txHash: log.transactionHash,
+                txHash: logEntry.transactionHash,
               },
             },
             { upsert: true },
           );
+
+          log.info(`${tag} Slash split recorded`, {
+            swapperRestitution: swapperRestitution.toString(),
+            ownerBounty: ownerBounty.toString(),
+            protocolCut: protocolCut.toString(),
+          });
 
           // Write reputation delta
           await writeReputationDelta(fillerNamehash, -REP_PENALTY, orderHash, "challenge_succeeded");
 
           // Flush reputation to chain immediately
           await flushReputation(walletClient, config.solverRegistryAddress, fillerNamehash);
+
+          log.info(`${tag} ChallengeSucceeded fully processed`, {
+            duration: formatDuration(Date.now() - startTime),
+            totalSucceeded,
+          });
         }
 
         // ── Handle failed challenges (solver was fine) ────────────
-        for (const log of failLogs) {
-          const orderHash = log.args.orderHash!;
-          const fillerNamehash = log.args.fillerNamehash!;
-          const tag = orderHash.slice(0, 10);
+        for (const logEntry of failLogs) {
+          const startTime = Date.now();
+          const orderHash = logEntry.args.orderHash!;
+          const fillerNamehash = logEntry.args.fillerNamehash!;
+          const tag = orderHash;
 
-          console.log(`[challenge-listener] ${tag} ChallengeFailed — solver defended`);
+          totalFailed++;
+          log.info(`${tag} CHALLENGE FAILED — solver defended successfully`, {
+            fillerNamehash,
+            challenger: logEntry.args.challenger ?? "unknown",
+            block: logEntry.blockNumber.toString(),
+            tx: logEntry.transactionHash,
+          });
 
           const db = await getDb();
           const fills = await getFillsCollection();
@@ -232,7 +274,7 @@ export async function startChallengeListener(
             {
               $set: {
                 orderHash,
-                challengerAddress: log.args.challenger ?? "",
+                challengerAddress: logEntry.args.challenger ?? "",
                 challengerNamehash: "",
                 agentTokenId: "",
                 benchmarkOutput: "",
@@ -240,9 +282,9 @@ export async function startChallengeListener(
                 eboToleranceBps: 0,
                 succeeded: false,
                 slashAmount: "0",
-                challengeBlock: Number(log.blockNumber),
+                challengeBlock: Number(logEntry.blockNumber),
                 challengeTimestamp: Math.floor(Date.now() / 1000),
-                txHash: log.transactionHash,
+                txHash: logEntry.transactionHash,
               },
             },
             { upsert: true },
@@ -253,11 +295,16 @@ export async function startChallengeListener(
 
           // Flush reputation to chain
           await flushReputation(walletClient, config.solverRegistryAddress, fillerNamehash);
+
+          log.info(`${tag} ChallengeFailed fully processed`, {
+            duration: formatDuration(Date.now() - startTime),
+            totalFailed,
+          });
         }
 
         lastProcessedBlock = to;
       } catch (err) {
-        console.error("[challenge-listener] Poll error:", err);
+        log.error("Poll cycle error (will retry in 5s)", err);
       }
 
       await sleep(5000);
@@ -265,12 +312,12 @@ export async function startChallengeListener(
   };
 
   poll().catch((err) =>
-    console.error("[challenge-listener] Fatal poll error:", err),
+    log.error("Fatal poll error — challenge listener stopped", err),
   );
 
   return () => {
     isRunning = false;
-    console.log("[challenge-listener] Stopped");
+    log.info("Challenge listener stopped", { totalSucceeded, totalFailed });
   };
 }
 
@@ -292,6 +339,12 @@ async function writeReputationDelta(
     orderHash,
     reason,
     timestamp: Math.floor(Date.now() / 1000),
+  });
+  log.info(`Reputation delta written`, {
+    solver: fillerNamehash,
+    delta: delta.toString(),
+    reason,
+    orderHash,
   });
 }
 
@@ -333,10 +386,16 @@ async function flushReputation(
       args: [fillerNamehash as `0x${string}`, "reckon.reputation", newRep.toString()],
     });
 
-    console.log(`[challenge-listener] Reputation flushed for ${fillerNamehash.slice(0, 10)}: ${newRep}`);
+    log.info(`Reputation flushed to chain`, {
+      solver: fillerNamehash,
+      newReputation: newRep.toString(),
+      totalDelta: totalDelta.toString(),
+    });
   } catch (err: any) {
     const reason = err?.shortMessage ?? err?.message ?? "unknown";
-    console.warn(`[challenge-listener] Reputation flush failed: ${reason}`);
+    log.warn(`Reputation flush to chain FAILED: ${reason}`, {
+      solver: fillerNamehash,
+    });
   }
 }
 

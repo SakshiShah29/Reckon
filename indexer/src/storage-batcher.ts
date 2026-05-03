@@ -8,6 +8,9 @@ import {
 } from "@reckon-protocol/types";
 import { getBatchesCollection } from "./db.js";
 import { defineChain, type Address, type WalletClient } from "viem";
+import { createLogger, formatDuration } from "./logger.js";
+
+const log = createLogger("storage-batcher");
 
 const base = defineChain({
   id: 8453,
@@ -62,6 +65,14 @@ export function createStorageBatcher(config: BatcherConfig) {
   const buffer: FillRecord[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let isFlushing = false;
+  let totalBatches = 0;
+  let totalRecordsFlushed = 0;
+
+  log.info("Storage batcher created", {
+    batchSize: FILL_BATCH_SIZE,
+    flushIntervalMs: FILL_BATCH_INTERVAL_MS,
+    anchoringEnabled: !!(config.walletClient && config.fillRegistryAddress),
+  });
 
   /**
    * Flushes the current buffer to 0G Storage.
@@ -82,9 +93,14 @@ export function createStorageBatcher(config: BatcherConfig) {
 
     const firstOrderHash = batch[0].orderHash;
     const lastOrderHash = batch[batch.length - 1].orderHash;
-    const tag = `batch[${firstOrderHash.slice(0, 8)}..${lastOrderHash.slice(0, 8)}]`;
+    const tag = `batch#${totalBatches + 1}`;
+    const flushStart = Date.now();
 
-    console.log(`[storage-batcher] ${tag} flushing ${batch.length} records to 0G Storage...`);
+    log.info(`${tag} flushing ${batch.length} records to 0G Storage...`, {
+      firstOrder: firstOrderHash,
+      lastOrder: lastOrderHash,
+      fillBlockRange: `${batch[0].fillBlock}..${batch[batch.length - 1].fillBlock}`,
+    });
 
     // Write to temp file in JSON Lines format
     const tempDir = mkdtempSync(join(tmpdir(), "reckon-batch-"));
@@ -95,8 +111,20 @@ export function createStorageBatcher(config: BatcherConfig) {
       writeFileSync(tempPath, lines, "utf-8");
 
       // Upload to 0G Storage
+      const uploadStart = Date.now();
       const rootHash = await upload0GStorage(tempPath, config);
-      console.log(`[storage-batcher] ${tag} uploaded, rootHash: ${rootHash.slice(0, 16)}...`);
+      const uploadDuration = Date.now() - uploadStart;
+
+      totalBatches++;
+      totalRecordsFlushed += batch.length;
+
+      log.info(`${tag} uploaded to 0G Storage`, {
+        rootHash: rootHash,
+        uploadDuration: formatDuration(uploadDuration),
+        records: batch.length,
+        totalBatches,
+        totalRecordsFlushed,
+      });
 
       // Record batch in MongoDB
       const batchRecord: FillBatch = {
@@ -105,7 +133,7 @@ export function createStorageBatcher(config: BatcherConfig) {
         lastOrderHash,
         recordCount: batch.length,
         anchoredAt: Math.floor(Date.now() / 1000),
-        txHash: "0x0000000000000000000000000000000000000000000000000000000000000000", // TODO: emit FillBatchAnchored on-chain
+        txHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
       };
 
       const collection = await getBatchesCollection();
@@ -114,7 +142,9 @@ export function createStorageBatcher(config: BatcherConfig) {
         { $setOnInsert: batchRecord },
         { upsert: true },
       );
-      console.log(`[storage-batcher] ${tag} recorded in MongoDB`);
+      log.info(`${tag} batch metadata saved to MongoDB`, {
+        rootHash: rootHash,
+      });
 
       // Anchor the Merkle root on-chain so anyone can verify the 0G data
       if (config.walletClient && config.fillRegistryAddress) {
@@ -132,17 +162,27 @@ export function createStorageBatcher(config: BatcherConfig) {
             ],
           });
           batchRecord.txHash = anchorTx;
-          console.log(`[storage-batcher] ${tag} anchored on-chain: ${anchorTx.slice(0, 10)}...`);
+
+          log.info(`${tag} anchored on-chain`, {
+            anchorTx: anchorTx,
+            rootHash: rootHash,
+          });
 
           // Update MongoDB with the anchor tx hash
           await collection.updateOne({ rootHash }, { $set: { txHash: anchorTx } });
         } catch (err: any) {
           const reason = err?.shortMessage ?? err?.message ?? "unknown";
-          console.warn(`[storage-batcher] ${tag} anchorBatch failed: ${reason}`);
+          log.warn(`${tag} anchorBatch on-chain FAILED: ${reason}`, {
+            rootHash: rootHash,
+          });
         }
       }
+
+      log.info(`${tag} flush complete`, {
+        totalDuration: formatDuration(Date.now() - flushStart),
+      });
     } catch (err) {
-      console.error(`[storage-batcher] ${tag} upload failed:`, err);
+      log.error(`${tag} upload FAILED — ${batch.length} records returned to buffer`, err);
       // Put records back in buffer for retry on next flush
       buffer.unshift(...batch);
     } finally {
@@ -158,7 +198,7 @@ export function createStorageBatcher(config: BatcherConfig) {
     if (flushTimer) clearTimeout(flushTimer);
     flushTimer = setTimeout(() => {
       flush().catch((err) =>
-        console.error("[storage-batcher] Timer flush error:", err),
+        log.error("Timer-triggered flush failed", err),
       );
     }, FILL_BATCH_INTERVAL_MS);
   }
@@ -169,8 +209,14 @@ export function createStorageBatcher(config: BatcherConfig) {
      */
     async add(fill: FillRecord): Promise<void> {
       buffer.push(fill);
+      log.debug(`Record added to buffer`, {
+        orderHash: fill.orderHash,
+        bufferSize: buffer.length,
+        threshold: FILL_BATCH_SIZE,
+      });
 
       if (buffer.length >= FILL_BATCH_SIZE) {
+        log.info(`Buffer reached threshold (${FILL_BATCH_SIZE}) — triggering flush`);
         if (flushTimer) clearTimeout(flushTimer);
         flushTimer = null;
         await flush();
@@ -185,6 +231,9 @@ export function createStorageBatcher(config: BatcherConfig) {
     async forceFlush(): Promise<void> {
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = null;
+      if (buffer.length > 0) {
+        log.info(`Force-flushing ${buffer.length} remaining records`);
+      }
       await flush();
     },
 

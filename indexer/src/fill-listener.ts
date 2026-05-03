@@ -9,6 +9,9 @@ import {
   PRIORITY_ORDER_REACTOR,
 } from "@reckon-protocol/types";
 import { getDb } from "./db.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("fill-listener");
 
 const CURSOR_COLLECTION = "listener_cursors";
 const CURSOR_KEY = "fill-listener";
@@ -56,9 +59,10 @@ export async function startFillListener(
 
   const reactorAddress = PRIORITY_ORDER_REACTOR as Address;
 
-  console.log(`[fill-listener] Watching Fill events on PriorityOrderReactor`);
-  console.log(`[fill-listener] Reactor: ${reactorAddress}`);
-  console.log(`[fill-listener] RPC: ${rpcUrl}`);
+  log.info("Starting Fill event listener", {
+    reactor: reactorAddress,
+    rpc: rpcUrl,
+  });
 
   // Detect RPC block range limit (free public RPCs like mainnet.base.org cap at 10 blocks)
   // Alchemy/Infura support 2000+, Anvil has no limit
@@ -72,12 +76,12 @@ export async function startFillListener(
       fromBlock: testFrom - testRange,
       toBlock: testFrom,
     });
+    log.info("RPC supports 500-block range queries");
   } catch {
     // If range query fails, fall back to small chunks for free RPCs
     maxChunkSize = 9n;
-    console.log(`[fill-listener] RPC limits detected — using ${maxChunkSize}-block chunks`);
+    log.warn("RPC limits detected — falling back to 9-block chunks (free RPC detected)");
   }
-  console.log(`[fill-listener] Using ${maxChunkSize}-block chunks`);
 
   let isRunning = true;
   const currentBlock = await client.getBlockNumber();
@@ -88,7 +92,18 @@ export async function startFillListener(
   let lastProcessedBlock = cursorDoc
     ? BigInt(cursorDoc.blockNumber)
     : currentBlock;
-  console.log(`[fill-listener] Starting from block ${lastProcessedBlock} (current: ${currentBlock})`);
+
+  const blockGap = currentBlock - lastProcessedBlock;
+  log.info("Poll loop starting", {
+    startBlock: lastProcessedBlock.toString(),
+    currentBlock: currentBlock.toString(),
+    blockGap: blockGap.toString(),
+    chunkSize: maxChunkSize.toString(),
+    resumed: cursorDoc ? "yes" : "no (first boot)",
+  });
+
+  let totalEventsFound = 0;
+  let pollCount = 0;
 
   const poll = async () => {
     while (isRunning) {
@@ -110,26 +125,47 @@ export async function startFillListener(
           toBlock: to,
         });
 
+        pollCount++;
+
         if (logs.length > 0) {
-          console.log(`[fill-listener] Found ${logs.length} Fill event(s) in blocks ${from}..${to}`);
+          totalEventsFound += logs.length;
+          log.info(`Found ${logs.length} Fill event(s)`, {
+            blocks: `${from}..${to}`,
+            totalFound: totalEventsFound,
+          });
         }
 
-        for (const log of logs) {
+        // Log progress every 100 polls when catching up
+        if (pollCount % 100 === 0 && to < currentBlock) {
+          const remaining = currentBlock - to;
+          log.info("Catch-up progress", {
+            processedUpTo: to.toString(),
+            blocksRemaining: remaining.toString(),
+            pollCount,
+          });
+        }
+
+        for (const logEntry of logs) {
           const rawFill: RawFillEvent = {
-            orderHash: log.args.orderHash!,
-            filler: log.args.filler!,
-            swapper: log.args.swapper!,
-            nonce: log.args.nonce!,
-            blockNumber: log.blockNumber,
-            transactionHash: log.transactionHash,
+            orderHash: logEntry.args.orderHash!,
+            filler: logEntry.args.filler!,
+            swapper: logEntry.args.swapper!,
+            nonce: logEntry.args.nonce!,
+            blockNumber: logEntry.blockNumber,
+            transactionHash: logEntry.transactionHash,
           };
 
           try {
             await handler(rawFill);
           } catch (err) {
-            console.error(
-              `[fill-listener] Handler error for ${rawFill.orderHash.slice(0, 10)}:`,
+            log.error(
+              `Handler error for fill`,
               err,
+              {
+                orderHash: rawFill.orderHash,
+                filler: rawFill.filler,
+                block: rawFill.blockNumber.toString(),
+              },
             );
           }
         }
@@ -143,7 +179,7 @@ export async function startFillListener(
           { upsert: true },
         );
       } catch (err) {
-        console.error("[fill-listener] Poll error:", err);
+        log.error("Poll cycle error (will retry in 2s)", err);
       }
 
       await sleep(2000);
@@ -151,12 +187,12 @@ export async function startFillListener(
   };
 
   poll().catch((err) =>
-    console.error("[fill-listener] Fatal poll error:", err),
+    log.error("Fatal poll error — fill listener stopped", err),
   );
 
   return () => {
     isRunning = false;
-    console.log("[fill-listener] Stopped");
+    log.info("Fill listener stopped", { totalEventsFound, pollCount });
   };
 }
 
