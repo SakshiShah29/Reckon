@@ -264,6 +264,23 @@ async function register(
     { upsert: true },
   );
 
+  // Upsert into subnames so ENS resolution works in dashboard & challenge-listener
+  const namespace = role === "solver" ? "solvers" : "challengers";
+  await db.collection("subnames").updateOne(
+    { namehash: node },
+    {
+      $setOnInsert: {
+        label,
+        namespace,
+        owner: ownerAddress,
+        namehash: node,
+        registeredAt: Date.now(),
+        textRecords: {},
+      },
+    },
+    { upsert: true },
+  );
+
   log.info(`Registration complete: ${fullName}`, {
     duration: formatDuration(Date.now() - startTime),
     node: node,

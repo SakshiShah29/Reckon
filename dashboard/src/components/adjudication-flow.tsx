@@ -34,6 +34,7 @@ interface ChallengeRecord {
   orderHash: string;
   challengerAddress: string;
   challengerNamehash: string;
+  challengerEnsName?: string;
   agentTokenId: string;
   benchmarkOutput: string;
   actualOutput: string;
@@ -52,6 +53,7 @@ interface SlashDocRecord {
   solverAddress?: string;
   reputationPenalty?: string;
   challengerNamehash: string;
+  challengerEnsName?: string;
   agentTokenId: string;
   slashAmount: string;
   swapperRestitution: string;
@@ -207,14 +209,14 @@ function RowDetail({ challenge, slash }: { challenge: ChallengeRecord; slash?: S
           View on BaseScan &rarr;
         </a>
         {challenge.challengerAddress && (
-          <a
-            href={`https://sepolia.basescan.org/address/${challenge.challengerAddress}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono text-[#64748B] hover:underline"
-          >
-            Challenger: {truncHex(challenge.challengerAddress)}
-          </a>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#64748B]">Challenger:</span>
+            <SolverBadge
+              ensName={challenge.challengerEnsName}
+              namehash={challenge.challengerNamehash}
+              address={challenge.challengerAddress}
+            />
+          </div>
         )}
         {slash && (
           <div className="flex items-center gap-1.5">
@@ -389,6 +391,22 @@ export function AdjudicationFlow() {
                     <span className="text-[12px] font-mono font-bold text-[#DC2626] flex-shrink-0">
                       ${amt}
                     </span>
+                  )}
+
+                  {/* Challenger */}
+                  <SolverBadge
+                    ensName={ch.challengerEnsName}
+                    namehash={ch.challengerNamehash}
+                    address={ch.challengerAddress}
+                  />
+
+                  {/* Solver */}
+                  {slash && (
+                    <SolverBadge
+                      ensName={slash.solverEnsName}
+                      namehash={slash.solverNamehash}
+                      address={slash.solverAddress}
+                    />
                   )}
 
                   {/* Agent */}

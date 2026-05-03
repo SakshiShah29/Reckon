@@ -312,8 +312,8 @@ export async function recordFill(
         tokenOut,
         inputAmount,              // uint128
         outputAmount,             // uint128
-        BigInt(toleranceBps),     // uint16 — must be bigint for viem
-        BigInt(outputsLength),    // uint8  — must be bigint for viem
+        toleranceBps,             // uint16
+        outputsLength,            // uint8
         BigInt(fillBlock),        // uint64
       ],
     });

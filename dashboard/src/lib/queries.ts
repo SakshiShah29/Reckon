@@ -8,6 +8,13 @@ import type {
   ReputationUpdate,
   ChallengeRecord,
 } from "@reckon-protocol/types";
+import { createPublicClient, http, type Address } from "viem";
+import { mainnet } from "viem/chains";
+
+const mainnetClient = createPublicClient({
+  chain: mainnet,
+  transport: http("https://eth.llamarpc.com"),
+});
 
 /**
  * Fetches the most recent fills, sorted by fillBlock descending.
@@ -24,15 +31,62 @@ export async function getRecentFills(limit = 50): Promise<FillRecord[]> {
 
 /**
  * Fetches recent challenges, sorted by challengeBlock descending.
+ * Enriches with challenger ENS name from subnames collection.
  */
-export async function getRecentChallenges(limit = 50): Promise<ChallengeRecord[]> {
+export async function getRecentChallenges(limit = 50) {
   const db = await getDb();
-  return db
+  const challenges = await db
     .collection<ChallengeRecord>(MONGO_COLLECTIONS.challenges)
     .find({})
     .sort({ challengeBlock: -1 })
     .limit(limit)
     .toArray();
+
+  // Resolve challenger ENS names from namehashes
+  const hashes = [
+    ...new Set(challenges.map((c) => c.challengerNamehash).filter(Boolean)),
+  ];
+  if (hashes.length > 0) {
+    // Try subnames collection first
+    const subnames = await db
+      .collection("subnames")
+      .find({ namehash: { $in: hashes } })
+      .toArray();
+    const lookup = new Map(
+      subnames.map((s) => [
+        s.namehash as string,
+        {
+          ensName: `${s.label}.${s.namespace}.reckonprotocol.eth`,
+          address: (s.owner as string) ?? "",
+        },
+      ]),
+    );
+
+    // Fallback: check registrations collection for any unresolved hashes
+    const unresolvedHashes = hashes.filter((h) => !lookup.has(h));
+    if (unresolvedHashes.length > 0) {
+      const regs = await db
+        .collection("registrations")
+        .find({ node: { $in: unresolvedHashes } })
+        .toArray();
+      for (const reg of regs) {
+        const ns = reg.role === "solver" ? "solvers" : "challengers";
+        lookup.set(reg.node as string, {
+          ensName: `${reg.label}.${ns}.reckonprotocol.eth`,
+          address: (reg.ownerAddress as string) ?? "",
+        });
+      }
+    }
+
+    for (const ch of challenges as any[]) {
+      if (lookup.has(ch.challengerNamehash)) {
+        const info = lookup.get(ch.challengerNamehash)!;
+        ch.challengerEnsName = info.ensName;
+      }
+    }
+  }
+
+  return challenges;
 }
 
 /**
@@ -48,15 +102,17 @@ export async function getRecentSlashes(limit = 50) {
     .limit(limit)
     .toArray();
 
-  // Collect namehashes that need ENS resolution
-  const needsResolve = slashes.filter(
-    (s) => s.solverNamehash && !s.solverEnsName,
-  );
-  if (needsResolve.length > 0) {
-    const hashes = [...new Set(needsResolve.map((s) => s.solverNamehash))];
+  // Collect all namehashes that need ENS resolution (both solver + challenger)
+  const allHashes = new Set<string>();
+  for (const s of slashes) {
+    if (s.solverNamehash && !s.solverEnsName) allHashes.add(s.solverNamehash);
+    if (s.challengerNamehash) allHashes.add(s.challengerNamehash);
+  }
+  if (allHashes.size > 0) {
+    // Try subnames collection first
     const subnames = await db
       .collection("subnames")
-      .find({ namehash: { $in: hashes } })
+      .find({ namehash: { $in: [...allHashes] } })
       .toArray();
     const lookup = new Map(
       subnames.map((s) => [
@@ -67,11 +123,32 @@ export async function getRecentSlashes(limit = 50) {
         },
       ]),
     );
-    for (const slash of slashes) {
+
+    // Fallback: check registrations collection for any unresolved hashes
+    const unresolvedHashes = [...allHashes].filter((h) => !lookup.has(h));
+    if (unresolvedHashes.length > 0) {
+      const regs = await db
+        .collection("registrations")
+        .find({ node: { $in: unresolvedHashes } })
+        .toArray();
+      for (const reg of regs) {
+        const ns = reg.role === "solver" ? "solvers" : "challengers";
+        lookup.set(reg.node as string, {
+          ensName: `${reg.label}.${ns}.reckonprotocol.eth`,
+          address: (reg.ownerAddress as string) ?? "",
+        });
+      }
+    }
+
+    for (const slash of slashes as any[]) {
       if (!slash.solverEnsName && lookup.has(slash.solverNamehash)) {
         const info = lookup.get(slash.solverNamehash)!;
         slash.solverEnsName = info.ensName;
         slash.solverAddress = info.address;
+      }
+      if (lookup.has(slash.challengerNamehash)) {
+        const info = lookup.get(slash.challengerNamehash)!;
+        slash.challengerEnsName = info.ensName;
       }
     }
   }
@@ -119,32 +196,85 @@ export async function getSolverByAddress(address: string): Promise<{
   const db = await getDb();
   const addrLower = address.toLowerCase();
 
-  // Look up subname by owner address (case-insensitive)
-  const subname = await db.collection("subnames").findOne({
-    $or: [
-      { owner: address },
-      { owner: addrLower },
-      { owner: address.toLowerCase() },
-    ],
+  // Strategy 1: Look up subname by owner address (case-insensitive)
+  let subname = await db.collection("subnames").findOne({
+    owner: { $regex: new RegExp(`^${addrLower}$`, "i") },
   });
 
-  if (!subname) return null;
+  // Strategy 2: If not found by owner, find via fills collection → namehash → subnames
+  if (!subname) {
+    const fill = await db
+      .collection<FillRecord>(MONGO_COLLECTIONS.fills)
+      .findOne({ filler: { $regex: new RegExp(`^${addrLower}$`, "i") } });
+    if (fill?.fillerNamehash) {
+      subname = await db.collection("subnames").findOne({
+        namehash: fill.fillerNamehash,
+      });
+    }
+  }
 
-  const ensName = `${subname.label}.${subname.namespace}.reckonprotocol.eth`;
-  const namehash = subname.namehash as string;
+  // Strategy 3: Try registrations collection → namehash → subnames
+  if (!subname) {
+    const reg = await db.collection("registrations").findOne({
+      solverAddress: { $regex: new RegExp(`^${addrLower}$`, "i") },
+    });
+    if (reg?.solverNamehash) {
+      subname = await db.collection("subnames").findOne({
+        namehash: reg.solverNamehash,
+      });
+    }
+  }
 
-  // Get reputation data
-  const rep = await db
-    .collection<ReputationUpdate>(MONGO_COLLECTIONS.reputationUpdates)
-    .findOne({ solverNamehash: namehash as `0x${string}` });
+  let ensName: string | null = null;
+  let namehash: string | null = null;
+
+  if (subname) {
+    ensName = `${subname.label}.${subname.namespace}.reckonprotocol.eth`;
+    namehash = subname.namehash as string;
+  }
+
+  // Strategy 4: Mainnet ENS reverse resolution as fallback
+  if (!ensName) {
+    try {
+      const resolved = await mainnetClient.getEnsName({
+        address: address as Address,
+      });
+      if (resolved) ensName = resolved;
+    } catch {
+      // Mainnet ENS resolution failed — continue without
+    }
+  }
+
+  // Get reputation data (try by namehash first, then by solver address in fills)
+  let rep = namehash
+    ? await db
+        .collection<ReputationUpdate>(MONGO_COLLECTIONS.reputationUpdates)
+        .findOne({ solverNamehash: namehash as `0x${string}` })
+    : null;
+
+  if (!rep) {
+    // Try finding reputation via fills → namehash
+    const fill = await db
+      .collection<FillRecord>(MONGO_COLLECTIONS.fills)
+      .findOne({ filler: { $regex: new RegExp(`^${addrLower}$`, "i") } });
+    if (fill?.fillerNamehash) {
+      namehash = fill.fillerNamehash;
+      rep = await db
+        .collection<ReputationUpdate>(MONGO_COLLECTIONS.reputationUpdates)
+        .findOne({ solverNamehash: fill.fillerNamehash });
+    }
+  }
 
   // Try to get bond amount from solver registration
-  const registration = await db.collection("registrations").findOne({
-    $or: [
-      { solverAddress: address },
-      { solverAddress: addrLower },
-    ],
-  });
+  const regQuery = namehash
+    ? {
+        $or: [
+          { solverAddress: { $regex: new RegExp(`^${addrLower}$`, "i") } },
+          { solverNamehash: namehash },
+        ],
+      }
+    : { solverAddress: { $regex: new RegExp(`^${addrLower}$`, "i") } };
+  const registration = await db.collection("registrations").findOne(regQuery);
 
   return {
     ensName,
