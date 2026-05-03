@@ -30,8 +30,89 @@ export async function getRecentFills(limit = 50): Promise<FillRecord[]> {
 }
 
 /**
+ * Given a list of iNFT token IDs, returns a map keyed by tokenId of
+ * `{ address, ensName }` describing the agent's current owner.
+ *
+ * Resolution order:
+ *   1. owner_attestations (relayer-attested current owner per OwnerRegistry)
+ *   2. subnames matching that owner under challengers.reckonprotocol.eth
+ *      (preferred); falls back to any namespace if none.
+ *   3. Mainnet ENS reverse resolution via viem.
+ *
+ * Tokens with no attestation are omitted from the result map.
+ */
+async function resolveAgentOwners(
+  tokenIds: string[],
+): Promise<Map<string, { address: string; ensName: string | null }>> {
+  const out = new Map<string, { address: string; ensName: string | null }>();
+  const distinct = [...new Set(tokenIds.filter(Boolean))];
+  if (distinct.length === 0) return out;
+
+  const db = await getDb();
+
+  // 1. Look up owners from owner_attestations
+  const attestations = await db
+    .collection(MONGO_COLLECTIONS.ownerAttestations)
+    .find({ tokenId: { $in: distinct } })
+    .toArray();
+  if (attestations.length === 0) return out;
+
+  const tokenToOwner = new Map<string, string>();
+  for (const att of attestations) {
+    if (att.tokenId && att.owner) {
+      tokenToOwner.set(String(att.tokenId), String(att.owner));
+    }
+  }
+
+  // 2. Look up ENS subnames for each owner address
+  const owners = [...new Set(tokenToOwner.values())];
+  const ownerEnsByLowerAddr = new Map<string, string>();
+
+  if (owners.length > 0) {
+    const subnameDocs = await db
+      .collection("subnames")
+      .find({
+        owner: { $in: owners.map((o) => new RegExp(`^${o}$`, "i")) },
+      })
+      .toArray();
+
+    // Prefer challengers.reckonprotocol.eth subname; fall back to any namespace
+    for (const doc of subnameDocs) {
+      const ownerKey = String(doc.owner).toLowerCase();
+      const fullName = `${doc.label}.${doc.namespace}.reckonprotocol.eth`;
+      const existing = ownerEnsByLowerAddr.get(ownerKey);
+      if (!existing || doc.namespace === "challengers") {
+        ownerEnsByLowerAddr.set(ownerKey, fullName);
+      }
+    }
+  }
+
+  // 3. Mainnet ENS reverse for any owner without a Reckon subname
+  for (const owner of owners) {
+    if (ownerEnsByLowerAddr.has(owner.toLowerCase())) continue;
+    try {
+      const reverse = await mainnetClient.getEnsName({
+        address: owner as Address,
+      });
+      if (reverse) ownerEnsByLowerAddr.set(owner.toLowerCase(), reverse);
+    } catch {
+      // mainnet reverse failed — owner stays unnamed, that's fine
+    }
+  }
+
+  for (const [tokenId, owner] of tokenToOwner.entries()) {
+    out.set(tokenId, {
+      address: owner,
+      ensName: ownerEnsByLowerAddr.get(owner.toLowerCase()) ?? null,
+    });
+  }
+  return out;
+}
+
+/**
  * Fetches recent challenges, sorted by challengeBlock descending.
- * Enriches with challenger ENS name from subnames collection.
+ * Enriches with challenger ENS name from subnames collection AND with
+ * the iNFT agent owner (resolved via owner_attestations → ENS).
  */
 export async function getRecentChallenges(limit = 50) {
   const db = await getDb();
@@ -83,6 +164,18 @@ export async function getRecentChallenges(limit = 50) {
         const info = lookup.get(ch.challengerNamehash)!;
         ch.challengerEnsName = info.ensName;
       }
+    }
+  }
+
+  // Resolve iNFT agent owner (and its ENS) for every challenge with an agentTokenId
+  const agentOwners = await resolveAgentOwners(
+    challenges.map((c) => c.agentTokenId),
+  );
+  for (const ch of challenges as any[]) {
+    const info = agentOwners.get(ch.agentTokenId);
+    if (info) {
+      ch.agentOwnerAddress = info.address;
+      if (info.ensName) ch.agentOwnerEnsName = info.ensName;
     }
   }
 
@@ -150,6 +243,18 @@ export async function getRecentSlashes(limit = 50) {
         const info = lookup.get(slash.challengerNamehash)!;
         slash.challengerEnsName = info.ensName;
       }
+    }
+  }
+
+  // Resolve iNFT agent owner (and its ENS) for every slash with an agentTokenId
+  const agentOwners = await resolveAgentOwners(
+    slashes.map((s) => s.agentTokenId),
+  );
+  for (const slash of slashes as any[]) {
+    const info = agentOwners.get(slash.agentTokenId);
+    if (info) {
+      slash.agentOwnerAddress = info.address;
+      if (info.ensName) slash.agentOwnerEnsName = info.ensName;
     }
   }
 

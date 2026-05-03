@@ -8,6 +8,7 @@ interface ChallengeRecord {
   orderHash: string;
   challengerAddress: string;
   challengerNamehash: string;
+  challengerEnsName?: string;
   agentTokenId: string;
   benchmarkOutput: string;
   actualOutput: string;
@@ -245,7 +246,7 @@ export function ProtocolChallenges() {
                       <span className="text-[10px] text-[#444]">Agent #{ch.agentTokenId}</span>
                     </div>
                     <p className="text-[10px] text-[#444] mt-0.5">
-                      Challenger: <span className="text-[#a78bfa]">{truncateHex(ch.challengerNamehash)}</span>
+                      <span className="text-[#a78bfa]">{ch.challengerEnsName ?? truncateHex(ch.challengerNamehash)}</span>
                     </p>
                   </div>
                 </div>

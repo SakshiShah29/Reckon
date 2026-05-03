@@ -36,6 +36,8 @@ interface ChallengeRecord {
   challengerNamehash: string;
   challengerEnsName?: string;
   agentTokenId: string;
+  agentOwnerAddress?: string;
+  agentOwnerEnsName?: string;
   benchmarkOutput: string;
   actualOutput: string;
   eboToleranceBps: number;
@@ -55,6 +57,8 @@ interface SlashDocRecord {
   challengerNamehash: string;
   challengerEnsName?: string;
   agentTokenId: string;
+  agentOwnerAddress?: string;
+  agentOwnerEnsName?: string;
   slashAmount: string;
   swapperRestitution: string;
   ownerBounty: string;
@@ -155,10 +159,28 @@ function RowDetail({ challenge, slash }: { challenge: ChallengeRecord; slash?: S
             {/* Owner row */}
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: "#8B5CF6" }} />
-              <span className="text-[11px] font-semibold text-[#7C3AED] w-[70px] flex-shrink-0">Owner 30%</span>
+              <span className="text-[11px] font-semibold text-[#7C3AED] w-[95px] flex-shrink-0">Challenger 30%</span>
               <span className="text-[12px] font-mono font-bold text-[#7C3AED]">${fmtUsdc(slash.ownerBounty)}</span>
               <span className="text-[10px] text-[#94A3B8] mx-1">&rarr;</span>
-              <span className="text-[10px] text-[#64748B] italic">Held in RoyaltyDistributor — claimable by iNFT owner</span>
+              {slash.agentOwnerAddress ? (
+                <>
+                  <a
+                    href={`https://sepolia.basescan.org/address/${slash.agentOwnerAddress}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-mono text-[#8B5CF6] hover:underline"
+                  >
+                    {slash.agentOwnerEnsName ?? truncHex(slash.agentOwnerAddress)}
+                  </a>
+                  <span className="text-[10px] text-[#94A3B8] italic">
+                    iNFT #{slash.agentTokenId} challenger
+                  </span>
+                </>
+              ) : (
+                <span className="text-[10px] text-[#64748B] italic">
+                  Held in RoyaltyDistributor — claimable by iNFT #{slash.agentTokenId} challenger
+                </span>
+              )}
               <a href={`https://sepolia.basescan.org/tx/${slash.txHash}#eventlog`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-[#94A3B8] hover:text-[#8B5CF6] ml-auto flex-shrink-0">
                 tx &rarr;
               </a>
@@ -208,13 +230,12 @@ function RowDetail({ challenge, slash }: { challenge: ChallengeRecord; slash?: S
         >
           View on BaseScan &rarr;
         </a>
-        {challenge.challengerAddress && (
+        {(challenge.agentOwnerEnsName || challenge.agentOwnerAddress) && (
           <div className="flex items-center gap-1.5">
             <span className="text-[#64748B]">Challenger:</span>
             <SolverBadge
-              ensName={challenge.challengerEnsName}
-              namehash={challenge.challengerNamehash}
-              address={challenge.challengerAddress}
+              ensName={challenge.agentOwnerEnsName}
+              address={challenge.agentOwnerAddress}
             />
           </div>
         )}
@@ -393,11 +414,12 @@ export function AdjudicationFlow() {
                     </span>
                   )}
 
-                  {/* Challenger */}
+                  {/* Challenger — resolved via the iNFT owner attestation
+                      (challenger subname namehashes are opaque on their own;
+                      the iNFT owner is who actually controls the agent). */}
                   <SolverBadge
-                    ensName={ch.challengerEnsName}
-                    namehash={ch.challengerNamehash}
-                    address={ch.challengerAddress}
+                    ensName={ch.agentOwnerEnsName}
+                    address={ch.agentOwnerAddress}
                   />
 
                   {/* Solver */}
@@ -409,7 +431,8 @@ export function AdjudicationFlow() {
                     />
                   )}
 
-                  {/* Agent */}
+                  {/* Agent — owner is shown in the Challenger badge above,
+                      so the iNFT id alone is enough here. */}
                   {ch.agentTokenId && (
                     <span className="badge badge-purple flex-shrink-0">
                       iNFT #{ch.agentTokenId}
@@ -457,7 +480,7 @@ export function AdjudicationFlow() {
             <span className="text-[10px] font-bold text-white">Swapper 60%</span>
           </div>
           <div className="h-full flex items-center justify-center" style={{ width: "30%", background: "#8B5CF6" }}>
-            <span className="text-[10px] font-bold text-white">Owner 30%</span>
+            <span className="text-[10px] font-bold text-white">Challenger 30%</span>
           </div>
           <div className="h-full rounded-r-full flex items-center justify-center" style={{ width: "10%", background: "#FBBF24" }}>
             <span className="text-[9px] font-bold text-white">10%</span>
