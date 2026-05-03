@@ -169,7 +169,7 @@ async function main() {
 
   if (challengerContractAddress && solverRegistryAddress) {
     stopChallengeListener = await startChallengeListener({
-      rpcUrl: baseRpcUrl,
+      rpcUrl: recorderRpcUrl,
       recorderRpcUrl,
       relayerPrivateKey,
       challengerAddress: challengerContractAddress,

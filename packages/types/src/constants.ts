@@ -64,7 +64,7 @@ export const PRIMARY_MODEL = "qwen/qwen-2.5-7b-instruct" as const;
 
 // ── Fill batching ───────────────────────────────────────────────
 export const FILL_BATCH_SIZE = 50;
-export const FILL_BATCH_INTERVAL_MS = 60_000; // 60 seconds
+export const FILL_BATCH_INTERVAL_MS = 60_00_000; // 600 seconds
 
 // ── ENS ─────────────────────────────────────────────────────────
 export const ENS_PARENT_NAME = "reckonprotocol.eth";
