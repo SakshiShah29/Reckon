@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "cd ../packages/types && npm run build && cd ../../indexer && tsc",
     "clean": "rm -rf dist",
     "start": "node --import tsx src/index.ts",
     "dev": "node --import tsx --watch src/index.ts"
