@@ -1,6 +1,7 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { base, baseSepolia } from "wagmi/chains";
-import { http, type Chain } from "wagmi";
+import { http } from "wagmi";
+import type { Chain } from "viem";
 
 const ANVIL_RPC =
   process.env.NEXT_PUBLIC_ANVIL_RPC_URL || "http://147.182.164.208:8545";
