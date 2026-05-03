@@ -652,6 +652,11 @@ reckon/
 
 Built for [ETHGlobal](https://ethglobal.com) &mdash; 2 builders, 4-week online format.
 
+| Name | Telegram | X |
+|------|----------|---|
+| **Sakshi Shah** | [@Saakshishah29](https://t.me/Saakshishah29) | [@0xSakshi](https://x.com/0xSakshi) |
+| **Sameera G** | [@sameerag19](https://t.me/sameerag19) | [@0xSamAg19](https://twitter.com/0xSamAg19) |
+
 ---
 
 ## License

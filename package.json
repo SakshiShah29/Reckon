@@ -13,7 +13,8 @@
     "solver"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w packages/types && npm run build -w dashboard",
+    "build:all": "npm run build --workspaces --if-present",
     "clean": "rm -rf node_modules packages/*/node_modules agent/node_modules inft-tools/node_modules dashboard/node_modules"
   },
   "engines": {
