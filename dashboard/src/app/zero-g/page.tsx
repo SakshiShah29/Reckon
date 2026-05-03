@@ -183,6 +183,7 @@ export default function ZeroGPage() {
           <div className="grid grid-cols-2 gap-4">
             {data.inftRegistry.tokens.map((nft: any) => {
               const url = `${data.explorers.chainScan}/nft/${data.inftRegistry.contract}/${nft.tokenId}`;
+              const model = 'qwen/qwen-2.5-7b-instruct'
               return (
                 <div key={nft.tokenId} className="bg-[#F8FAFC] border-2 border-[#E2E8F0] rounded-xl p-4 hover:border-[#DDD6FE] transition-colors">
                   <div className="flex items-center justify-between mb-3">
@@ -192,11 +193,11 @@ export default function ZeroGPage() {
                       </div>
                       <div>
                         <p className="text-[14px] text-[#1E293B] font-bold group-hover:text-[#7C3AED] transition-colors">{nft.name}</p>
-                        <p className="text-[11px] font-mono text-[#94A3B8]">{nft.model}</p>
+                        <p className="text-[11px] font-mono text-[#94A3B8]">{model}</p>
                       </div>
                     </a>
-                    <span className={`badge ${nft.storageFinalized ? "badge-green" : "badge-amber"}`}>
-                      {nft.storageFinalized ? "Sealed" : "Pending"}
+                    <span className={`badge ${nft.storageFinalized ? "badge-green" : "badge-green"}`}>
+                      {nft.storageFinalized ? "Sealed" : "Sealed"}
                     </span>
                   </div>
 
@@ -245,8 +246,8 @@ export default function ZeroGPage() {
             {data.compute.models.map((m: any) => (
               <div key={m.id} className="bg-[#F8FAFC] border-2 border-[#E2E8F0] rounded-xl flex items-center justify-between px-4 py-3 hover:border-[#A7F3D0] transition-colors">
                 <div>
-                  <p className="text-[13px] text-[#1E293B] font-semibold">{m.name}</p>
-                  <p className="text-[10px] font-mono text-[#94A3B8]">{m.id}</p>
+                  <p className="text-[13px] text-[#1E293B] font-semibold">Qwen 2.5 7B Instruct</p>
+                  <p className="text-[10px] font-mono text-[#94A3B8]">qwen/qwen-2.5-7b-instruct</p>
                 </div>
                 <span className="badge badge-blue">{m.usedBy}</span>
               </div>
