@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const navTabs = [
   { label: "Dashboard", href: "/", icon: "grid" },
   { label: "Swap", href: "/swap", icon: "swap" },
-  { label: "Agents", href: "/agents", icon: "bot" },
   { label: "Register", href: "/register", icon: "user" },
   { label: "0G", href: "/zero-g", icon: "cloud" },
-  { label: "Protocol", href: "/protocol", icon: "shield" },
 ];
 
 function NavIcon({ type, active }: { type: string; active: boolean }) {
@@ -73,17 +72,13 @@ export function NavShell({ children }: { children: React.ReactNode }) {
           })}
         </div>
 
-        {/* Right side */}
+        {/* Right side — wallet connect */}
         <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded-full px-3 py-[6px] bg-[#ECFDF5] border-2 border-[#A7F3D0]">
-            <div className="live-dot" />
-            <span className="text-[11px] text-[#059669] font-semibold font-mono">Base Sepolia</span>
-          </div>
-          <div
-            className="w-9 h-9 rounded-full bg-gradient-to-br from-[#FBBF24] to-[#F472B6] border-2 border-[#1E293B] flex items-center justify-center text-[11px] font-bold text-[#1E293B] shadow-[3px_3px_0_#1E293B]"
-          >
-            SS
-          </div>
+          <ConnectButton
+            showBalance={false}
+            chainStatus="icon"
+            accountStatus="address"
+          />
         </div>
       </nav>
 

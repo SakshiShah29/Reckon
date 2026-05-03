@@ -211,8 +211,13 @@ function permit2DomainSeparator(chainId: number): Hex {
 
 // ── POST handler ─────────────────────────────────────────────────
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
+    const body = await req.json().catch(() => ({}));
+    const badFillPct = BigInt(Math.min(Math.max(Number(body.badFillPct ?? 100), 1), 100));
+    const inputEth = parseFloat(body.amount ?? "0.01");
+    const inputAmountRaw = BigInt(Math.floor(inputEth * 1e18));
+
     const SWAPPER_KEY = env("SWAPPER_PRIVATE_KEY") as `0x${string}`;
     const BASE_RPC = env("BASE_RPC_URL");
     const BASE_SEPOLIA_RPC = env("BASE_SEPOLIA_RPC_URL");
@@ -233,11 +238,10 @@ export async function POST() {
       args: [WETH_BASE_SEP, USDC_BASE_SEP],
     });
 
-    // 2. Compute amounts — 0.01 WETH in, 50% of fair USDC out
-    const BAD_FILL_PCT = 50n;
-    const inputAmount = 10n ** 16n; // 0.01 WETH
+    // 2. Compute amounts
+    const inputAmount = inputAmountRaw > 0n ? inputAmountRaw : 10n ** 16n;
     const fairOutput = (benchmark * inputAmount) / 10n ** 18n;
-    const outputAmount = (fairOutput * BAD_FILL_PCT) / 100n;
+    const outputAmount = (fairOutput * badFillPct) / 100n;
 
     // 3. Wrap ETH → WETH if needed
     const wethBal: bigint = await anvilClient.readContract({
@@ -363,7 +367,9 @@ export async function POST() {
       ...solverData,
       inputAmount: inputAmount.toString(),
       outputAmount: outputAmount.toString(),
+      fairOutput: fairOutput.toString(),
       benchmarkPrice: benchmark.toString(),
+      badFillPct: Number(badFillPct),
       swapper: account.address,
     });
   } catch (err: any) {

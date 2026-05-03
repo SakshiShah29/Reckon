@@ -2,7 +2,6 @@ import { StatsCards } from "@/components/stats-cards";
 import { FillChart } from "@/components/fill-chart";
 import { IndexerHealth } from "@/components/indexer-health";
 import { EbboOracle } from "@/components/ebbo-oracle";
-import { AgentHeartbeat } from "@/components/agent-heartbeat";
 import { SolverLeaderboard } from "@/components/solver-leaderboard";
 import { ChallengeFeed } from "@/components/challenge-feed";
 import { ProtocolEconomics } from "@/components/protocol-economics";
@@ -45,9 +44,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* ── Row 3: Agents + Leaderboard + Challenges ── */}
-      <div className="grid grid-cols-3 gap-4 mt-5">
-        <AgentHeartbeat />
+      {/* ── Row 3: Leaderboard + Challenges ── */}
+      <div className="grid grid-cols-2 gap-4 mt-5">
         <SolverLeaderboard />
         <ChallengeFeed />
       </div>

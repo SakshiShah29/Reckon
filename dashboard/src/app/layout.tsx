@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { NavShell } from "@/components/nav-shell";
+import { Web3Provider } from "@/components/web3-provider";
 
 export const metadata: Metadata = {
   title: "Reckon — Solver Accountability Dashboard",
@@ -17,7 +18,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="min-h-screen">
-        <NavShell>{children}</NavShell>
+        <Web3Provider>
+          <NavShell>{children}</NavShell>
+        </Web3Provider>
       </body>
     </html>
   );
