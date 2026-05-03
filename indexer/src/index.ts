@@ -11,6 +11,9 @@ import { createStorageBatcher, type BatcherConfig } from "./storage-batcher.js";
 import { closeDb } from "./db.js";
 import { initRegistrar, registerSolver, registerChallenger } from "./registrar.js";
 import { USDC_BASE, WETH_BASE, USDC_BASE_SEP, WETH_BASE_SEP } from "@reckon-protocol/types";
+import { createLogger, redactKey } from "./logger.js";
+
+const log = createLogger("indexer");
 
 const base = defineChain({
   id: 8453,
@@ -49,8 +52,10 @@ function readBody(req: IncomingMessage): Promise<string> {
 // ── Main ────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("=== Reckon Indexer/Relayer ===");
-  console.log();
+  log.info("========================================");
+  log.info("  Reckon Indexer/Relayer — Starting up");
+  log.info("========================================");
+  log.info(`Node ${process.version} | PID ${process.pid} | env=${process.env["NODE_ENV"] ?? "development"}`);
 
   const baseRpcUrl = required("BASE_RPC_URL"); // Anvil fork — swap events
   const baseSepoliaRpcUrl = optional("BASE_SEPOLIA_RPC_URL"); // Base Sepolia — protocol contracts
@@ -58,13 +63,30 @@ async function main() {
   const relayerPrivateKey = required("RELAYER_PRIVATE_KEY") as `0x${string}`;
   const defaultToleranceBps = parseInt(optional("DEFAULT_TOLERANCE_BPS") ?? "50", 10);
 
-  if (baseSepoliaRpcUrl) {
-    console.log("[indexer] Dual-chain mode: listening on Anvil fork, recording on Base Sepolia");
-  }
+  // ── Config summary ─────────────────────────────────────────────
+  log.info("Configuration:", {
+    BASE_RPC_URL: baseRpcUrl,
+    BASE_SEPOLIA_RPC_URL: baseSepoliaRpcUrl ?? "(not set)",
+    RECORDER_RPC_URL: recorderRpcUrl,
+    relayerKey: redactKey(relayerPrivateKey),
+    defaultToleranceBps,
+  });
 
-  // On-chain recording is optional — omit FILL_REGISTRY_ADDRESS to run in listen-only mode
   const fillRegistryAddress = optional("FILL_REGISTRY_ADDRESS") as Address | undefined;
   const solverRegistryAddress = optional("SOLVER_REGISTRY_ADDRESS") as Address | undefined;
+
+  log.info("Contract addresses:", {
+    FILL_REGISTRY: fillRegistryAddress ?? "(not set — listen-only mode)",
+    SOLVER_REGISTRY: solverRegistryAddress ?? "(not set — hash fallback)",
+    CHALLENGER: optional("CHALLENGER_ADDRESS") ?? "(not set)",
+    CHALLENGER_NFT: optional("CHALLENGER_NFT_ADDRESS") ?? "(not set)",
+    OWNER_REGISTRY: optional("OWNER_REGISTRY_ADDRESS") ?? "(not set)",
+    CHALLENGER_REGISTRY: optional("CHALLENGER_REGISTRY_ADDRESS") ?? "(not set)",
+  });
+
+  if (baseSepoliaRpcUrl) {
+    log.info("Dual-chain mode ACTIVE: listening on Anvil fork, recording on Base Sepolia");
+  }
 
   // ── Initialize fill recorder ─────────────────────────────────
   initRecorder({
@@ -83,10 +105,10 @@ async function main() {
   });
 
   if (!fillRegistryAddress) {
-    console.log("[indexer] Listen-only mode — FILL_REGISTRY_ADDRESS not set, on-chain recording will skip");
+    log.warn("Listen-only mode — FILL_REGISTRY_ADDRESS not set, on-chain recording will skip");
   }
   if (!solverRegistryAddress) {
-    console.log("[indexer] No SolverRegistry — namehash lookup will use filler address hash fallback");
+    log.warn("No SolverRegistry — namehash lookup will use filler address hash fallback");
   }
 
   // ── Initialize storage batcher (optional) ─────────────────────
@@ -113,21 +135,27 @@ async function main() {
       walletClient: batcherWallet,
       fillRegistryAddress,
     });
-    console.log("[indexer] 0G Storage batcher enabled");
+    log.info("0G Storage batcher ENABLED", { zgRpcUrl, zgIndexerUrl });
   } else {
-    console.log("[indexer] 0G Storage batcher disabled — ZG_* env vars not set");
+    log.info("0G Storage batcher DISABLED — ZG_* env vars not set");
   }
 
+  // ── Track module statuses for startup summary ─────────────────
+  const modules: { name: string; status: string }[] = [];
+
   // ── Start fill listener ──────────────────────────────────────
+  let fillsProcessed = 0;
   const stopFillListener = await startFillListener(
     baseRpcUrl,
     async (rawFill) => {
       const fill = await recordFill(rawFill);
+      fillsProcessed++;
       if (fill && batcher) {
         await batcher.add(fill);
       }
     },
   );
+  modules.push({ name: "fill-listener", status: "RUNNING" });
 
   // ── Start owner attester (optional) ──────────────────────────
   let stopOwnerAttester: (() => void) | null = null;
@@ -144,8 +172,10 @@ async function main() {
       ownerRegistryAddress,
       useBaseSepolia: !!baseSepoliaRpcUrl,
     });
+    modules.push({ name: "owner-attester", status: "RUNNING" });
   } else {
-    console.log("[indexer] Owner attester disabled — CHALLENGER_NFT_ADDRESS or OWNER_REGISTRY_ADDRESS not set");
+    log.info("Owner attester DISABLED — CHALLENGER_NFT_ADDRESS or OWNER_REGISTRY_ADDRESS not set");
+    modules.push({ name: "owner-attester", status: "DISABLED" });
   }
 
   // ── Start bond unlocker (needs FillRegistry) ──────────────────
@@ -158,8 +188,10 @@ async function main() {
       fillRegistryAddress,
       useBaseSepolia: !!baseSepoliaRpcUrl,
     });
+    modules.push({ name: "bond-unlocker", status: "RUNNING" });
   } else {
-    console.log("[indexer] Bond unlocker disabled — no FILL_REGISTRY_ADDRESS");
+    log.info("Bond unlocker DISABLED — no FILL_REGISTRY_ADDRESS");
+    modules.push({ name: "bond-unlocker", status: "DISABLED" });
   }
 
   // ── Start challenge listener (needs Challenger + SolverRegistry) ──
@@ -169,15 +201,17 @@ async function main() {
 
   if (challengerContractAddress && solverRegistryAddress) {
     stopChallengeListener = await startChallengeListener({
-      rpcUrl: recorderRpcUrl,
+      rpcUrl: recorderRpcUrl,   // Challenge events are on Base Sepolia, not Anvil
       recorderRpcUrl,
       relayerPrivateKey,
       challengerAddress: challengerContractAddress,
       solverRegistryAddress,
       useBaseSepolia: !!baseSepoliaRpcUrl,
     });
+    modules.push({ name: "challenge-listener", status: "RUNNING" });
   } else {
-    console.log("[indexer] Challenge listener disabled — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
+    log.info("Challenge listener DISABLED — CHALLENGER_ADDRESS or SOLVER_REGISTRY_ADDRESS not set");
+    modules.push({ name: "challenge-listener", status: "DISABLED" });
   }
 
   // ── Initialize registrar (needs both registries) ──────────────
@@ -196,26 +230,43 @@ async function main() {
       secondarySolverRegistryAddress: anvilSolverRegistryAddress,
       secondaryChallengerRegistryAddress: anvilChallengerRegistryAddress,
     });
+    modules.push({ name: "registrar", status: "RUNNING" });
   } else {
-    console.log("[indexer] Registrar disabled — SOLVER_REGISTRY_ADDRESS or CHALLENGER_REGISTRY_ADDRESS not set");
+    log.info("Registrar DISABLED — SOLVER_REGISTRY_ADDRESS or CHALLENGER_REGISTRY_ADDRESS not set");
+    modules.push({ name: "registrar", status: "DISABLED" });
   }
+
+  // ── Startup summary ───────────────────────────────────────────
+  log.info("────────────────────────────────────────");
+  log.info("Module status:");
+  for (const m of modules) {
+    log.info(`  ${m.status === "RUNNING" ? "+" : "-"} ${m.name}: ${m.status}`);
+  }
+  log.info("────────────────────────────────────────");
 
   // ── HTTP server (health + registration endpoints) ─────────────
   const port = parseInt(process.env["PORT"] ?? "10000", 10);
   const startedAt = Date.now();
+  const httpLog = createLogger("http");
 
   createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+    const method = req.method ?? "GET";
+    const reqStart = Date.now();
 
-    if (req.method === "GET" && url.pathname === "/health") {
+    if (method === "GET" && url.pathname === "/health") {
       const uptime = Math.floor((Date.now() - startedAt) / 1000);
+      const body = { status: "ok", uptime, batcherPending: batcher?.pending ?? 0, fillsProcessed };
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", uptime, batcherPending: batcher?.pending ?? 0 }));
+      res.end(JSON.stringify(body));
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/register") {
+    if (method === "POST" && url.pathname === "/register") {
+      httpLog.info(`POST /register`, { ip: req.socket.remoteAddress });
+
       if (!solverRegistryAddress || !challengerRegistryAddress) {
+        httpLog.warn("Registration attempted but registrar not configured");
         res.writeHead(503, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Registrar not configured" }));
         return;
@@ -225,13 +276,17 @@ async function main() {
         const body = await readBody(req);
         const { label, address: ownerAddress, role } = JSON.parse(body);
 
+        httpLog.info("Registration request", { label, address: ownerAddress ?? "", role });
+
         if (!label || !ownerAddress || !role) {
+          httpLog.warn("Missing required fields in registration request");
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Missing required fields: label, address, role" }));
           return;
         }
 
         if (role !== "solver" && role !== "challenger") {
+          httpLog.warn("Invalid role in registration request", { role });
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "role must be 'solver' or 'challenger'" }));
           return;
@@ -242,56 +297,70 @@ async function main() {
             ? await registerSolver(label, ownerAddress)
             : await registerChallenger(label, ownerAddress);
 
+        httpLog.info("Registration succeeded", {
+          label,
+          role,
+          node: result.node,
+          duration: `${Date.now() - reqStart}ms`,
+        });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(result));
       } catch (err: any) {
         const message = err.shortMessage ?? err.message ?? "unknown error";
-        console.error("[registrar] Registration failed:", message);
+        httpLog.error(`Registration failed: ${message}`, err);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: message }));
       }
       return;
     }
 
+    httpLog.warn(`404 ${method} ${url.pathname}`);
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   }).listen(port, () => {
-    console.log(`[indexer] HTTP server listening on :${port}`);
+    log.info(`HTTP server listening on port ${port}`);
   });
 
-  // ── Health logging ────────────────────────────────────────────
+  // ── Periodic stats logging ─────────────────────────────────────
+  const statsLog = createLogger("stats");
   const healthTimer = setInterval(() => {
-    console.log(
-      `[indexer:health] alive — batcher pending: ${batcher?.pending ?? 0}`,
-    );
+    const uptime = Math.floor((Date.now() - startedAt) / 1000);
+    const uptimeStr = uptime < 60 ? `${uptime}s` : `${Math.floor(uptime / 60)}m${uptime % 60}s`;
+    const memMB = Math.round(process.memoryUsage.rss() / 1024 / 1024);
+    statsLog.info("Heartbeat", {
+      uptime: uptimeStr,
+      fillsProcessed,
+      batcherPending: batcher?.pending ?? 0,
+      memoryMB: memMB,
+    });
   }, 30_000);
 
   // ── Graceful shutdown ─────────────────────────────────────────
-  const shutdown = async () => {
-    console.log("\n[indexer] Shutting down...");
+  const shutdown = async (signal: string) => {
+    log.info(`Received ${signal} — shutting down gracefully...`);
     clearInterval(healthTimer);
     stopFillListener();
     if (stopOwnerAttester) stopOwnerAttester();
     if (stopBondUnlocker) stopBondUnlocker();
     if (stopChallengeListener) stopChallengeListener();
 
-    if (batcher) {
-      console.log("[indexer] Flushing remaining batch records...");
+    if (batcher && batcher.pending > 0) {
+      log.info(`Flushing remaining ${batcher.pending} batch records...`);
       await batcher.forceFlush();
     }
 
     await closeDb();
-    console.log("[indexer] Shutdown complete");
+    log.info("Shutdown complete. Goodbye.");
     process.exit(0);
   };
 
-  process.on("SIGINT", () => { shutdown(); });
-  process.on("SIGTERM", () => { shutdown(); });
+  process.on("SIGINT", () => { shutdown("SIGINT"); });
+  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
 
-  console.log("[indexer] Running. Listening for UniswapX Fill events...");
+  log.info("Indexer fully started. Listening for UniswapX Fill events...");
 }
 
 main().catch((err) => {
-  console.error("[indexer] Fatal error:", err);
+  log.error("Fatal startup error — exiting", err);
   process.exit(1);
 });

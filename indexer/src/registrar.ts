@@ -10,6 +10,9 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { getDb } from "./db.js";
 import { SOLVERS_PARENT, CHALLENGERS_PARENT } from "@reckon-protocol/types";
+import { createLogger, formatDuration } from "./logger.js";
+
+const log = createLogger("registrar");
 
 const base = defineChain({
   id: 8453,
@@ -108,7 +111,7 @@ export async function initRegistrar(config: RegistrarConfig): Promise<void> {
       solverRegistryAddress: config.secondarySolverRegistryAddress,
       challengerRegistryAddress: config.secondaryChallengerRegistryAddress,
     };
-    console.log("[registrar] Dual-chain: registering on both Sepolia and Anvil fork");
+    log.info("Dual-chain registration enabled (Sepolia + Anvil fork)");
   }
 
   state = {
@@ -129,7 +132,11 @@ export async function initRegistrar(config: RegistrarConfig): Promise<void> {
     .collection(REGISTRATIONS_COLLECTION)
     .createIndex({ ownerAddress: 1, role: 1 }, { unique: true });
 
-  console.log("[registrar] Initialized");
+  log.info("Registrar initialized", {
+    solverRegistry: config.solverRegistryAddress,
+    challengerRegistry: config.challengerRegistryAddress,
+    dualChain: secondary ? "yes" : "no",
+  });
 }
 
 export interface RegisterResult {
@@ -174,11 +181,18 @@ async function registerOnChain(
   });
 
   if (alreadyRegistered) {
-    console.log(`[registrar] ${chainLabel}: ${ownerAddress} already registered as ${role}`);
+    log.info(`[${chainLabel}] Address already registered as ${role} — skipping`, {
+      address: ownerAddress,
+      role,
+    });
     return "0x" as Hex;
   }
 
-  console.log(`[registrar] ${chainLabel}: Registering ${role}: ${fullName} → ${ownerAddress}`);
+  log.info(`[${chainLabel}] Registering ${role}: ${fullName}`, {
+    address: ownerAddress,
+    node: node,
+    registry: registryAddress,
+  });
 
   const txHash = await (clients.walletClient as any).writeContract({
     address: registryAddress,
@@ -187,8 +201,17 @@ async function registerOnChain(
     args: [node, ownerAddress],
   });
 
+  log.info(`[${chainLabel}] Waiting for tx confirmation...`, {
+    tx: txHash,
+  });
+
   await (clients.publicClient as any).waitForTransactionReceipt({ hash: txHash });
-  console.log(`[registrar] ${chainLabel}: Registered ${fullName}: ${txHash}`);
+
+  log.info(`[${chainLabel}] Registration confirmed`, {
+    fullName,
+    tx: txHash,
+    role,
+  });
   return txHash;
 }
 
@@ -200,6 +223,7 @@ async function register(
   if (!state) throw new Error("Registrar not initialized");
 
   if (!LABEL_REGEX.test(label)) {
+    log.warn(`Invalid label rejected: "${label}"`);
     throw new Error(
       `Invalid label "${label}": must be 2-32 lowercase alphanumeric or hyphens`,
     );
@@ -208,6 +232,14 @@ async function register(
   const parent = role === "solver" ? SOLVERS_PARENT : CHALLENGERS_PARENT;
   const fullName = `${label}.${parent}`;
   const node = namehash(fullName) as Hex;
+  const startTime = Date.now();
+
+  log.info(`Starting registration: ${fullName}`, {
+    label,
+    role,
+    address: ownerAddress,
+    node: node,
+  });
 
   const txHash = await registerOnChain(state.primary, "primary", node, ownerAddress, role, fullName);
 
@@ -231,6 +263,12 @@ async function register(
     },
     { upsert: true },
   );
+
+  log.info(`Registration complete: ${fullName}`, {
+    duration: formatDuration(Date.now() - startTime),
+    node: node,
+    tx: txHash ? txHash : "already-registered",
+  });
 
   return { node, label, fullName, txHash };
 }

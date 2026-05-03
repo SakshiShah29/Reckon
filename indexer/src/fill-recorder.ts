@@ -16,6 +16,9 @@ import {
 } from "@reckon-protocol/types";
 import type { RawFillEvent } from "./fill-listener.js";
 import { getFillsCollection } from "./db.js";
+import { createLogger, formatDuration } from "./logger.js";
+
+const log = createLogger("fill-recorder");
 
 const base = defineChain({
   id: 8453,
@@ -131,14 +134,13 @@ export function initRecorder(config: RecorderConfig): void {
     tokenAddressMap: config.tokenAddressMap,
   };
 
-  console.log(`[fill-recorder] Initialized with relayer ${account.address}`);
-  console.log(`[fill-recorder] FillRegistry: ${config.fillRegistryAddress} (chain ${recorderChain.id})`);
-  if (config.fillSourceRpcUrl) {
-    console.log(`[fill-recorder] Dual-chain: reading fill txs from Anvil, recording on Base Sepolia`);
-  }
-  if (config.tokenAddressMap) {
-    console.log(`[fill-recorder] Token address map active: ${Object.keys(config.tokenAddressMap).length} mapping(s)`);
-  }
+  log.info("Recorder initialized", {
+    relayer: account.address,
+    fillRegistry: config.fillRegistryAddress,
+    chain: recorderChain.id,
+    dualChain: config.fillSourceRpcUrl ? "yes" : "no",
+    tokenMappings: config.tokenAddressMap ? Object.keys(config.tokenAddressMap).length : 0,
+  });
 }
 
 /**
@@ -155,8 +157,16 @@ export async function recordFill(
 ): Promise<FillRecord | null> {
   if (!clients) throw new Error("Recorder not initialized — call initRecorder first");
 
-  const tag = rawFill.orderHash.slice(0, 10);
+  const tag = rawFill.orderHash;
+  const startTime = Date.now();
   const { publicClient, fillSourceClient, walletClient, fillRegistryAddress, solverRegistryAddress } = clients;
+
+  log.debug(`Processing fill ${tag}`, {
+    filler: rawFill.filler,
+    swapper: rawFill.swapper,
+    block: rawFill.blockNumber.toString(),
+    tx: rawFill.transactionHash,
+  });
 
   // 1. Check if filler is a registered Reckon solver via SolverRegistry.namehashOf()
   //    Skip entirely if the filler is not registered — we only track Reckon-protected fills.
@@ -170,13 +180,18 @@ export async function recordFill(
     });
 
     if (fillerNamehash === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} not registered — skipping`);
+      log.debug(`${tag} filler ${rawFill.filler} not registered — skipping`);
       return null;
     }
   } catch {
-    console.log(`[fill-recorder] ${tag} filler ${rawFill.filler} not registered — skipping`);
+    log.debug(`${tag} filler ${rawFill.filler} not registered (contract call failed) — skipping`);
     return null;
   }
+
+  log.info(`${tag} filler is registered`, {
+    filler: rawFill.filler,
+    namehash: fillerNamehash,
+  });
 
   // 2. Read transaction receipt from the fill source chain (Anvil fork)
   let receipt;
@@ -186,7 +201,10 @@ export async function recordFill(
     });
   } catch {
     // Receipt not available yet (tx may still be pending on the RPC)
-    console.warn(`[fill-recorder] ${tag} receipt not found, skipping (will retry on next poll)`);
+    log.warn(`${tag} receipt not found — skipping (will retry on next poll)`, {
+      tx: rawFill.transactionHash,
+      block: rawFill.blockNumber.toString(),
+    });
     return null;
   }
 
@@ -206,26 +224,29 @@ export async function recordFill(
   let inputAmount = 0n;
   let outputAmount = 0n;
 
-  for (const log of transferLogs) {
-    if (log.topics.length < 3) continue;
+  for (const transferLog of transferLogs) {
+    if (transferLog.topics.length < 3) continue;
 
-    const from = ("0x" + log.topics[1]!.slice(26)) as Address;
-    const to = ("0x" + log.topics[2]!.slice(26)) as Address;
-    const amount = log.data !== "0x" ? BigInt(log.data) : 0n;
+    const from = ("0x" + transferLog.topics[1]!.slice(26)) as Address;
+    const to = ("0x" + transferLog.topics[2]!.slice(26)) as Address;
+    const amount = transferLog.data !== "0x" ? BigInt(transferLog.data) : 0n;
 
     if (from.toLowerCase() === rawFill.swapper.toLowerCase()) {
       // Swapper sending = input token
-      tokenIn = log.address as Address;
+      tokenIn = transferLog.address as Address;
       inputAmount = amount;
     } else if (to.toLowerCase() === rawFill.swapper.toLowerCase()) {
       // Swapper receiving = output token
-      tokenOut = log.address as Address;
+      tokenOut = transferLog.address as Address;
       outputAmount = amount;
     }
   }
 
   if (inputAmount === 0n || outputAmount === 0n) {
-    console.warn(`[fill-recorder] ${tag} could not parse transfer amounts from tx, skipping`);
+    log.warn(`${tag} could not parse transfer amounts — skipping`, {
+      tx: rawFill.transactionHash,
+      transferLogCount: transferLogs.length,
+    });
     return null;
   }
 
@@ -234,11 +255,11 @@ export async function recordFill(
     const mappedIn = clients.tokenAddressMap[tokenIn.toLowerCase()];
     const mappedOut = clients.tokenAddressMap[tokenOut.toLowerCase()];
     if (mappedIn) {
-      console.log(`[fill-recorder] ${tag} tokenIn ${tokenIn} → ${mappedIn}`);
+      log.info(`${tag} tokenIn mapped: ${tokenIn} → ${mappedIn}`);
       tokenIn = mappedIn;
     }
     if (mappedOut) {
-      console.log(`[fill-recorder] ${tag} tokenOut ${tokenOut} → ${mappedOut}`);
+      log.info(`${tag} tokenOut mapped: ${tokenOut} → ${mappedOut}`);
       tokenOut = mappedOut;
     }
   }
@@ -269,9 +290,9 @@ export async function recordFill(
 
   // 4. Count outputs (we only support single-output orders)
   //    Count how many distinct transfers go TO the swapper
-  const outputTransfers = transferLogs.filter((log) => {
-    if (log.topics.length < 3) return false;
-    const to = ("0x" + log.topics[2]!.slice(26)).toLowerCase();
+  const outputTransfers = transferLogs.filter((transferLog) => {
+    if (transferLog.topics.length < 3) return false;
+    const to = ("0x" + transferLog.topics[2]!.slice(26)).toLowerCase();
     return to === rawFill.swapper.toLowerCase();
   });
   const outputsLength = outputTransfers.length;
@@ -296,10 +317,20 @@ export async function recordFill(
         BigInt(fillBlock),  // uint64
       ],
     });
-    console.log(`[fill-recorder] ${tag} recorded on-chain tx: ${recordTxHash.slice(0, 10)}...`);
+    log.info(`${tag} recorded on-chain`, {
+      recordTx: recordTxHash,
+      inputAmount: inputAmount.toString(),
+      outputAmount: outputAmount.toString(),
+      toleranceBps,
+      fillBlock,
+      challengeDeadline,
+    });
   } catch (err: any) {
     const reason = err?.shortMessage ?? err?.message ?? "unknown";
-    console.warn(`[fill-recorder] ${tag} on-chain recordFill failed: ${reason}`);
+    log.warn(`${tag} on-chain recordFill FAILED: ${reason}`, {
+      filler: rawFill.filler,
+      fillBlock,
+    });
     return null;
   }
 
@@ -329,9 +360,16 @@ export async function recordFill(
       { $setOnInsert: { ...fill, recordedOnChain: true } },
       { upsert: true },
     );
-    console.log(`[fill-recorder] ${tag} written to MongoDB`);
+    const elapsed = Date.now() - startTime;
+    log.info(`${tag} fully processed and saved to MongoDB`, {
+      duration: formatDuration(elapsed),
+      fillBlock,
+      filler: rawFill.filler,
+    });
   } catch (err) {
-    console.error(`[fill-recorder] ${tag} MongoDB write failed:`, err);
+    log.error(`${tag} MongoDB write failed`, err, {
+      orderHash: rawFill.orderHash,
+    });
   }
 
   return fill;
