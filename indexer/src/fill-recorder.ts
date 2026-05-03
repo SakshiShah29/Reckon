@@ -310,11 +310,11 @@ export async function recordFill(
         rawFill.swapper,
         tokenIn,
         tokenOut,
-        inputAmount,        // uint128
-        outputAmount,       // uint128
-        toleranceBps,       // uint16
-        outputsLength,      // uint8
-        BigInt(fillBlock),  // uint64
+        inputAmount,              // uint128
+        outputAmount,             // uint128
+        BigInt(toleranceBps),     // uint16 — must be bigint for viem
+        BigInt(outputsLength),    // uint8  — must be bigint for viem
+        BigInt(fillBlock),        // uint64
       ],
     });
     log.info(`${tag} recorded on-chain`, {

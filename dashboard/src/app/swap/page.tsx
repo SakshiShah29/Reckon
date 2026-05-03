@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PartnerLogos } from "@/components/partner-logos";
 
 /* ─── Types ─── */
@@ -15,6 +15,16 @@ interface SwapResult {
   benchmarkPrice: string;
   badFillPct: number;
   swapper: string;
+}
+
+interface SolverInfo {
+  ensName: string | null;
+  namehash: string | null;
+  address: string;
+  reputationScore: string | null;
+  totalFills: number;
+  slashCount: number;
+  bondAmount: string | null;
 }
 
 type SwapStep = "idle" | "submitting" | "filled" | "error";
@@ -48,6 +58,62 @@ function TokenIcon({ symbol, size = 32 }: { symbol: string; size?: number }) {
       style={{ width: size, height: size, background: color, fontSize: size * 0.35 }}
     >
       {symbol === "WETH" ? "W" : symbol[0]}
+    </div>
+  );
+}
+
+/* ─── Solver Badge ─── */
+function SolverBadge({ address }: { address: string }) {
+  const [info, setInfo] = useState<SolverInfo | null>(null);
+
+  useEffect(() => {
+    if (!address) return;
+    fetch(`/api/solver-info?address=${address}`)
+      .then((r) => r.json())
+      .then(setInfo)
+      .catch(() => {});
+  }, [address]);
+
+  const explorerUrl = `https://sepolia.basescan.org/address/${address}`;
+  const displayName = info?.ensName || truncAddr(address);
+  const score = info?.reputationScore ? Number(info.reputationScore) : null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F3FF] border-2 border-[#DDD6FE] text-[11px] font-bold text-[#7C3AED] hover:bg-[#EDE9FE] hover:shadow-[3px_3px_0_#DDD6FE] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all duration-200"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+          </svg>
+          {displayName}
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+        {score !== null && (
+          <span className={`badge ${score >= 80 ? "badge-green" : score >= 50 ? "badge-amber" : "badge-red"}`}>
+            Rep: {score}%
+          </span>
+        )}
+        {info?.bondAmount && (
+          <span className="badge badge-blue">
+            Bond: {(Number(info.bondAmount) / 1e6).toFixed(2)} USDC
+          </span>
+        )}
+      </div>
+      {info && (
+        <div className="flex items-center gap-3 text-[10px] text-[#64748B]">
+          <span>{info.totalFills} fills</span>
+          {info.slashCount > 0 && (
+            <span className="text-[#EF4444]">{info.slashCount} slashes</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -109,13 +175,17 @@ function OrderProgress({ step, result }: { step: SwapStep; result: SwapResult | 
         <div className="p-3 rounded-xl bg-[#ECFDF5] border-2 border-[#A7F3D0] space-y-2">
           <div className="flex items-center gap-2 mb-1">
             <div className="live-dot" />
-            <span className="text-[12px] font-semibold text-[#059669]">
-              Filled by <span className="font-mono">{truncAddr(result.solver)}</span>
-            </span>
+            <span className="text-[12px] font-semibold text-[#059669]">Filled by</span>
+          </div>
+          {/* Solver badge with name, reputation, bond */}
+          <div className="mb-2">
+            <SolverBadge address={result.solver} />
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-[#64748B]">Transaction</span>
-            <span className="text-[10px] font-mono text-[#059669]">{truncAddr(result.txHash)}</span>
+            <a href={`https://sepolia.basescan.org/tx/${result.txHash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] font-mono text-[#059669] hover:underline">
+              {truncAddr(result.txHash)}
+            </a>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-[#64748B]">Order Hash</span>

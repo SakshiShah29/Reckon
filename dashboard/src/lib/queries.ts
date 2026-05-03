@@ -104,6 +104,60 @@ export async function getSolverReputation(
 }
 
 /**
+ * Looks up solver info by on-chain address.
+ * Resolves ENS subname + reputation from subnames + reputationUpdates collections.
+ */
+export async function getSolverByAddress(address: string): Promise<{
+  ensName: string | null;
+  namehash: string | null;
+  address: string;
+  reputationScore: string | null;
+  totalFills: number;
+  slashCount: number;
+  bondAmount: string | null;
+} | null> {
+  const db = await getDb();
+  const addrLower = address.toLowerCase();
+
+  // Look up subname by owner address (case-insensitive)
+  const subname = await db.collection("subnames").findOne({
+    $or: [
+      { owner: address },
+      { owner: addrLower },
+      { owner: address.toLowerCase() },
+    ],
+  });
+
+  if (!subname) return null;
+
+  const ensName = `${subname.label}.${subname.namespace}.reckonprotocol.eth`;
+  const namehash = subname.namehash as string;
+
+  // Get reputation data
+  const rep = await db
+    .collection<ReputationUpdate>(MONGO_COLLECTIONS.reputationUpdates)
+    .findOne({ solverNamehash: namehash as `0x${string}` });
+
+  // Try to get bond amount from solver registration
+  const registration = await db.collection("registrations").findOne({
+    $or: [
+      { solverAddress: address },
+      { solverAddress: addrLower },
+    ],
+  });
+
+  return {
+    ensName,
+    namehash,
+    address,
+    reputationScore: rep?.reputationScore ?? null,
+    totalFills: rep?.totalFills ?? 0,
+    slashCount: rep?.slashCount ?? 0,
+    bondAmount: registration?.bondAmount ?? null,
+  };
+}
+
+/**
  * Fetches fills for a specific solver.
  */
 export async function getFillsBySolver(

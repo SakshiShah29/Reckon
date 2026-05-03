@@ -22,6 +22,8 @@ interface ChallengeRecord {
 interface SlashDocRecord {
   orderHash: string;
   solverNamehash: string;
+  solverEnsName?: string;
+  solverAddress?: string;
   challengerNamehash: string;
   agentTokenId: string;
   slashAmount: string;
@@ -44,6 +46,26 @@ const resultColors: Record<ChallengeResult, string> = {
 function truncateHex(hex: string): string {
   if (hex.length <= 10) return hex;
   return `${hex.slice(0, 6)}...${hex.slice(-4)}`;
+}
+
+/* ── Solver Badge ── */
+function SolverBadge({ namehash, ensName, address }: { namehash?: string; ensName?: string; address?: string }) {
+  const displayName = ensName || truncateHex(namehash ?? address ?? "");
+  const explorerUrl = address ? `https://sepolia.basescan.org/address/${address}` : null;
+
+  const badge = (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#F5F3FF] border border-[#DDD6FE] text-[10px] font-bold text-[#7C3AED] hover:bg-[#EDE9FE] transition-all cursor-pointer">
+      {displayName}
+      {explorerUrl && (
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      )}
+    </span>
+  );
+
+  if (explorerUrl) return <a href={explorerUrl} target="_blank" rel="noopener noreferrer">{badge}</a>;
+  return badge;
 }
 
 function formatSlashAmount(raw: string): string {
@@ -285,7 +307,10 @@ export function ProtocolChallenges() {
                   {/* Slash distribution */}
                   {result === "Slashed" && slash && (
                     <div className="bg-[#141414] rounded-lg p-3">
-                      <p className="text-[10px] text-[#555] uppercase tracking-wider mb-2">Slash Distribution</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[10px] text-[#555] uppercase tracking-wider">Slash Distribution</p>
+                        <SolverBadge namehash={slash.solverNamehash} ensName={slash.solverEnsName} address={slash.solverAddress} />
+                      </div>
                       <div className="flex gap-1 h-3 rounded-full overflow-hidden mb-3">
                         <div className="h-full rounded-l-full" style={{ width: "60%", background: "#00D4AA" }} />
                         <div className="h-full" style={{ width: "30%", background: "#a78bfa" }} />

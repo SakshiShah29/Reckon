@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 
 interface ReputationUpdate {
   solverNamehash: string;
+  solverEnsName?: string;
+  solverAddress?: string;
   reputationScore: string;
   totalFills: number;
   slashCount: number;
@@ -73,7 +75,8 @@ export function SolverLeaderboard() {
           const color = RANK_COLORS[i % RANK_COLORS.length];
           const shadowColor = RANK_SHADOWS[i % RANK_SHADOWS.length];
           const hash = s.solverNamehash ?? "";
-          const truncHash = hash.length > 10 ? `${hash.slice(0, 6)}\u2026${hash.slice(-4)}` : hash || "unknown";
+          const displayName = s.solverEnsName || (hash.length > 10 ? `${hash.slice(0, 6)}\u2026${hash.slice(-4)}` : hash || "unknown");
+          const explorerUrl = s.solverAddress ? `https://sepolia.basescan.org/address/${s.solverAddress}` : null;
 
           // Progress ring
           const r = 16;
@@ -111,7 +114,13 @@ export function SolverLeaderboard() {
 
               {/* Info */}
               <div className="flex-1 min-w-0">
-                <p className="text-[12px] font-bold text-[#1E293B] font-mono truncate">{truncHash}</p>
+                {explorerUrl ? (
+                  <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="text-[12px] font-bold text-[#7C3AED] truncate block hover:underline" style={{ fontFamily: s.solverEnsName ? "var(--font-body)" : "var(--font-mono)" }}>
+                    {displayName}
+                  </a>
+                ) : (
+                  <p className="text-[12px] font-bold text-[#1E293B] font-mono truncate">{displayName}</p>
+                )}
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[10px] text-[#64748B] font-medium">{s.totalFills} fills</span>
                   {s.slashCount > 0 && (

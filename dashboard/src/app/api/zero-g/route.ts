@@ -60,13 +60,6 @@ const ChallengerNFTABI = [
     stateMutability: "view",
     type: "function",
   },
-  {
-    inputs: [],
-    name: "totalSupply",
-    outputs: [{ type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
 ] as const;
 
 // ── Galileo chain definition ─────────────────────────────────────
@@ -141,16 +134,10 @@ export async function GET() {
     // Fetch data in parallel
     const [
       db,
-      totalSupply,
       storageInfoResults,
       inftResults,
     ] = await Promise.all([
       getDb(),
-      galileoClient.readContract({
-        address: CHALLENGER_NFT,
-        abi: ChallengerNFTABI,
-        functionName: "totalSupply",
-      }).catch(() => BigInt(0)),
       // Storage file info for each brain blob
       Promise.all(AGENT_CONFIGS.map((a) => fetchStorageFileInfo(a.brainRootHash))),
       // iNFT on-chain data
@@ -208,7 +195,7 @@ export async function GET() {
       contract: CHALLENGER_NFT,
       chainId: 16602,
       chainName: "0G Galileo",
-      totalSupply: Number(totalSupply),
+      totalSupply: brainBlobs.filter((b) => b.onChain).length,
       tokens: brainBlobs.map((b) => ({
         tokenId: b.tokenId,
         name: b.name,

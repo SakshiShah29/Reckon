@@ -6,6 +6,8 @@ import { useState, useEffect, useCallback } from "react";
 
 interface ReputationUpdate {
   solverNamehash: string;
+  solverEnsName?: string;
+  solverAddress?: string;
   reputationScore: string;
   totalFills: number;
   slashCount: number;
@@ -149,9 +151,26 @@ export function ProtocolSolvers() {
                     {/* Rank */}
                     <td className="py-3 pr-3 text-[12px] text-[#555] font-medium">{i + 1}</td>
 
-                    {/* Solver namehash */}
+                    {/* Solver name */}
                     <td className="py-3 pr-3">
-                      <p className="text-[12px] text-[#6366f1] font-medium font-mono">{truncateHex(solver.solverNamehash)}</p>
+                      {solver.solverAddress ? (
+                        <a
+                          href={`https://sepolia.basescan.org/address/${solver.solverAddress}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[12px] text-[#6366f1] font-medium hover:underline"
+                          style={{ fontFamily: solver.solverEnsName ? "inherit" : "var(--font-mono)" }}
+                        >
+                          {solver.solverEnsName || truncateHex(solver.solverNamehash)}
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </a>
+                      ) : (
+                        <p className="text-[12px] text-[#6366f1] font-medium font-mono">
+                          {solver.solverEnsName || truncateHex(solver.solverNamehash)}
+                        </p>
+                      )}
                     </td>
 
                     {/* Reputation with ring */}

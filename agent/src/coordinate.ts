@@ -208,7 +208,8 @@ export async function coordinate(
   if (action === "release") {
     return releaseClaim(config, keyBytes, signer, Indexer, Batcher, getFlowContract);
   }
-
+  console.log(`[coordinate] Axl Peer Keys and Api url: ${config.axlPeerKeys}, ${config.axlApiUrl}`);
+  
   // action === "acquire"
   const transport =
     config.axlApiUrl && config.axlPeerKeys?.length

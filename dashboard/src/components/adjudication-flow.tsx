@@ -2,6 +2,32 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+/* ── Solver Badge (linkable to explorer) ─────────────────────── */
+
+function SolverBadge({ ensName, namehash, address }: { ensName?: string; namehash?: string; address?: string }) {
+  const displayName = ensName || (namehash ? truncHex(namehash) : truncHex(address ?? ""));
+  const explorerUrl = address ? `https://sepolia.basescan.org/address/${address}` : null;
+
+  const inner = (
+    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F3FF] border-2 border-[#DDD6FE] text-[11px] font-bold text-[#7C3AED] hover:bg-[#EDE9FE] hover:shadow-[3px_3px_0_#DDD6FE] hover:translate-x-[-1px] hover:translate-y-[-1px] transition-all duration-200 cursor-pointer">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+      </svg>
+      {displayName}
+      {explorerUrl && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" strokeWidth="2.5" strokeLinecap="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      )}
+    </span>
+  );
+
+  if (explorerUrl) {
+    return <a href={explorerUrl} target="_blank" rel="noopener noreferrer">{inner}</a>;
+  }
+  return inner;
+}
+
 /* ── Types ────────────────────────────────────────────────────── */
 
 interface ChallengeRecord {
@@ -162,29 +188,16 @@ function RowDetail({ challenge, slash }: { challenge: ChallengeRecord; slash?: S
           </svg>
           <span className="text-[11px] font-semibold text-[#DC2626]">Reputation &minus;5%</span>
           <span className="text-[10px] text-[#64748B]">for solver</span>
-          {slash.solverEnsName ? (
-            <span className="text-[11px] font-bold text-[#1E293B]">{slash.solverEnsName}</span>
-          ) : (
-            <span className="text-[11px] font-mono font-bold text-[#1E293B]">{truncHex(slash.solverNamehash)}</span>
-          )}
-          {slash.solverAddress && (
-            <>
-              <span className="text-[10px] text-[#94A3B8]">|</span>
-              <a
-                href={`https://sepolia.basescan.org/address/${slash.solverAddress}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] font-mono text-[#8B5CF6] hover:underline"
-              >
-                {truncHex(slash.solverAddress)}
-              </a>
-            </>
-          )}
+          <SolverBadge
+            ensName={slash.solverEnsName}
+            namehash={slash.solverNamehash}
+            address={slash.solverAddress}
+          />
         </div>
       )}
 
       {/* Tx links */}
-      <div className="flex items-center gap-4 text-[11px]">
+      <div className="flex items-center gap-4 text-[11px] flex-wrap">
         <a
           href={`https://sepolia.basescan.org/tx/${challenge.txHash}`}
           target="_blank"
@@ -203,8 +216,15 @@ function RowDetail({ challenge, slash }: { challenge: ChallengeRecord; slash?: S
             Challenger: {truncHex(challenge.challengerAddress)}
           </a>
         )}
-        {slash?.solverNamehash && (
-          <span className="font-mono text-[#64748B]">Solver: {truncHex(slash.solverNamehash)}</span>
+        {slash && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#64748B]">Solver:</span>
+            <SolverBadge
+              ensName={slash.solverEnsName}
+              namehash={slash.solverNamehash}
+              address={slash.solverAddress}
+            />
+          </div>
         )}
       </div>
     </div>

@@ -4,6 +4,7 @@
   --font-heading: "Outfit", system-ui, sans-serif;
   --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --font-landing: "Space Grotesk", system-ui, sans-serif;
 }
 
 /* ── Page background: warm cream with dot grid ── */
@@ -207,6 +208,131 @@ h1, h2, h3, h4 {
 
 /* ── Selection ── */
 ::selection { background: rgba(139, 92, 246, 0.2); color: #1E293B; }
+
+/* ══════════════════════════════════════════════════════════════
+   LANDING PAGE
+   ══════════════════════════════════════════════════════════════ */
+
+/* Override body bg on landing */
+.landing-root {
+  background: #06060e !important;
+  background-image: none !important;
+}
+
+/* ── Animated mesh gradient ── */
+.landing-mesh {
+  background:
+    radial-gradient(ellipse 50% 50% at 20% 30%, #c471ed 0%, transparent 70%),
+    radial-gradient(ellipse 40% 60% at 75% 20%, #12c2e9 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 80%, #b9a0d2 0%, transparent 70%),
+    radial-gradient(ellipse 45% 55% at 80% 70%, #f64f59 0%, transparent 70%),
+    radial-gradient(ellipse 55% 45% at 30% 65%, #6366f1 0%, transparent 70%),
+    #0a0a18;
+  filter: blur(60px) saturate(1.6) contrast(1.05);
+  animation: mesh-drift 20s ease-in-out infinite alternate;
+}
+@keyframes mesh-drift {
+  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1); }
+  25%  { transform: translate(5%, -8%) rotate(3deg) scale(1.04); }
+  50%  { transform: translate(-4%, 6%) rotate(-2deg) scale(0.97); }
+  75%  { transform: translate(7%, 3%) rotate(4deg) scale(1.02); }
+  100% { transform: translate(-3%, -5%) rotate(-3deg) scale(1); }
+}
+
+/* ── Floating orbs ── */
+.landing-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  will-change: transform;
+}
+.landing-orb-1 {
+  width: 400px; height: 400px;
+  background: #8B5CF6;
+  top: 10%; left: -5%;
+  animation: orb-float-1 14s ease-in-out infinite alternate;
+}
+.landing-orb-2 {
+  width: 350px; height: 350px;
+  background: #14d0f0;
+  top: 50%; right: -8%;
+  animation: orb-float-2 18s ease-in-out infinite alternate;
+}
+.landing-orb-3 {
+  width: 300px; height: 300px;
+  background: #e0a8e1;
+  bottom: 5%; left: 30%;
+  animation: orb-float-3 16s ease-in-out infinite alternate;
+}
+@keyframes orb-float-1 {
+  0%   { transform: translate(0,0) scale(1); }
+  100% { transform: translate(80px, 60px) scale(1.15); }
+}
+@keyframes orb-float-2 {
+  0%   { transform: translate(0,0) scale(1); }
+  100% { transform: translate(-70px, -50px) scale(0.9); }
+}
+@keyframes orb-float-3 {
+  0%   { transform: translate(0,0) scale(1); }
+  100% { transform: translate(50px, -70px) scale(1.1); }
+}
+
+/* ── Fade-in entrance ── */
+@keyframes fade-up {
+  0%   { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.fade-up-d1 { animation-delay: 0.1s; }
+.fade-up-d2 { animation-delay: 0.25s; }
+.fade-up-d3 { animation-delay: 0.4s; }
+.fade-up-d4 { animation-delay: 0.55s; }
+.fade-up-d5 { animation-delay: 0.7s; }
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, #ffffff 0%, #c4b5fd 40%, #14d0f0 70%, #e0a8e1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Glow border card ── */
+.glow-card {
+  position: relative;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 20px;
+  overflow: hidden;
+  transition: border-color 0.4s, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.glow-card:hover {
+  border-color: rgba(255,255,255,0.12);
+  transform: translateY(-4px);
+}
+.glow-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(139,92,246,0.15), transparent 50%, rgba(20,208,240,0.1));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ── Pipeline step connector ── */
+.pipeline-line {
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.06) 0%, rgba(139,92,246,0.3) 50%, rgba(255,255,255,0.06) 100%);
+  flex: 1;
+}
 
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
