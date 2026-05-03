@@ -133,7 +133,7 @@ export async function startChallengeListener(
         }
 
         const from = lastProcessedBlock + 1n;
-        const to = currentBlock - from > 500n ? from + 500n : currentBlock;
+        const to = currentBlock - from > 9n ? from + 9n : currentBlock;
 
         // Fetch both event types in parallel
         const [successLogs, failLogs] = await Promise.all([
@@ -439,12 +439,11 @@ async function flushReputation(
     const collection = db.collection(MONGO_COLLECTIONS.reputationUpdates);
 
     // Sum all deltas for this node
-    const pipeline = [
-      { $match: { fillerNamehash } },
-      { $group: { _id: null, totalDelta: { $sum: { $toLong: "$delta" } } } },
-    ];
-    const [result] = await collection.aggregate(pipeline).toArray();
-    const totalDelta = BigInt(result?.totalDelta ?? 0);
+    const docs = await collection.find({ fillerNamehash }).toArray();
+    let totalDelta = 0n;
+    for (const doc of docs) {
+      totalDelta += BigInt(doc.delta);
+    }
 
     // Start from 500000000000000000 (0.5) as initial reputation
     const initial = 500_000_000_000_000_000n;

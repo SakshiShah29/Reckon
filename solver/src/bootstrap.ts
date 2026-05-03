@@ -36,7 +36,7 @@ export interface BootstrapConfig {
   solverLabel: string;
 }
 
-const BOND_AMOUNT = 50n * 10n ** 6n; // 50 USDC
+const BOND_AMOUNT = 5000n * 10n ** 6n; // 50 USDC
 
 export async function bootstrapSolver(config: BootstrapConfig): Promise<void> {
   const {
