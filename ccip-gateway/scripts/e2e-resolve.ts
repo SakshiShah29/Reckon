@@ -30,9 +30,10 @@ import { namehash } from "viem/ens";
 const ETHEREUM_RPC =
   process.env.ETHEREUM_RPC || "https://ethereum-rpc.publicnode.com";
 
-const TEST_SUBNAME = "alice.solvers.reckonprotocol.eth";
-const TEST_OWNER = "0x00000000000000000000000000000000000A11CE";
-const TEST_REPUTATION = "500000000000000000";
+const TEST_SUBNAME = "challenger-4.challengers.reckonprotocol.eth";
+const TEST_OWNER = "0xFdFa4fF359C9E06E82eF37300cA746CA189C22a4";
+const TEST_REPUTATION = "0";
+const LABEL = "challenger-4"
 
 async function seedMongoDB() {
   const uri = process.env.MONGODB_URI_RO;
@@ -56,16 +57,11 @@ async function seedMongoDB() {
     }
 
     await subnames.insertOne({
-      label: "alice",
-      namespace: "solvers",
+      label: LABEL,
+      namespace: "challengers",
       owner: TEST_OWNER,
       namehash: node,
       registeredAt: Date.now(),
-      textRecords: {
-        "reckon.reputation": TEST_REPUTATION,
-        "reckon.totalFills": "12",
-        "reckon.slashCount": "0",
-      },
     });
     console.log(`✓ Seeded "${TEST_SUBNAME}" into MongoDB (namehash: ${node})`);
   } finally {
@@ -83,22 +79,6 @@ async function resolveViaViem() {
   console.log(`Subname: ${TEST_SUBNAME}`);
   console.log(`RPC:     ${ETHEREUM_RPC}`);
   console.log("");
-
-  // 1. Resolve text record: reckon.reputation
-  try {
-    const reputation = await client.getEnsText({
-      name: normalize(TEST_SUBNAME),
-      key: "reckon.reputation",
-    });
-    console.log(`✓ text("reckon.reputation") = "${reputation}"`);
-    if (reputation === TEST_REPUTATION) {
-      console.log("  → matches expected value");
-    } else {
-      console.log(`  ✗ expected "${TEST_REPUTATION}", got "${reputation}"`);
-    }
-  } catch (err: any) {
-    console.log(`✗ text("reckon.reputation") failed: ${err.message}`);
-  }
 
   // 2. Resolve text record: reckon.totalFills
   try {

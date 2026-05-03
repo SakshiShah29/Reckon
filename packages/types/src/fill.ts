@@ -19,6 +19,10 @@ export interface ChallengeRecord {
   challengerAddress: `0x${string}`;
   challengerNamehash: `0x${string}`;
   agentTokenId: string;
+  /** Current owner of the iNFT, looked up via owner_attestations by agentTokenId. */
+  agentOwnerAddress?: string;
+  /** ENS name for the iNFT owner — prefers challengers.reckonprotocol.eth subname, falls back to mainnet reverse. */
+  agentOwnerEnsName?: string;
   benchmarkOutput: string;
   actualOutput: string;
   eboToleranceBps: number;
@@ -37,6 +41,10 @@ export interface SlashDocRecord {
   reputationPenalty?: string;
   challengerNamehash: `0x${string}`;
   agentTokenId: string;
+  /** Current owner of the iNFT, looked up via owner_attestations by agentTokenId. */
+  agentOwnerAddress?: string;
+  /** ENS name for the iNFT owner — prefers challengers.reckonprotocol.eth subname, falls back to mainnet reverse. */
+  agentOwnerEnsName?: string;
   slashAmount: string;
   swapperRestitution: string;
   ownerBounty: string;

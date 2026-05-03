@@ -84,6 +84,7 @@ export const MONGO_COLLECTIONS = {
   challenges: "challenges",
   slashes: "slashes",
   reputationUpdates: "reputation_updates",
+  reputationEvents: "reputation_events",
   ownerAttestations: "owner_attestations",
   fillBatches: "fill_batches",
   registrations: "registrations",

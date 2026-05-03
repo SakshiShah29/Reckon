@@ -552,7 +552,70 @@ Shared dev infrastructure:
 
 **Contract count:** 10 new Solidity contracts. 8 deployed to Base mainnet, 1 (`ChallengerNFT`) deployed to 0G Galileo testnet, 1 (`ReckonWildcardResolver`) deployed to Ethereum mainnet. ~2400-2900 lines total.
 
-**Off-chain code count:** relayer (~400 LoC), CCIP-Read gateway (~150 LoC), challenger agent (SKILL.md + orchestrator + 5 primitives, ~500 LoC total), dashboard (~600 LoC), KeeperHub skill pack (~300 LoC), AXL helper package (~150 LoC). All TypeScript except the AXL Go binary.
+**Off-chain code count:** relayer (~400 LoC), CCIP-Read gateway (~150 LoC), demo solver (~350 LoC), challenger agent (SKILL.md + orchestrator + 5 primitives, ~500 LoC total), dashboard (~600 LoC), KeeperHub skill pack (~300 LoC), AXL helper package (~150 LoC). All TypeScript except the AXL Go binary.
+
+---
+
+### Demo Solver (`solver/`)
+
+A reference UniswapX solver that demonstrates end-to-end Reckon integration. This is a standalone HTTP service that accepts signed PriorityOrders from swappers, validates them against the Reckon protocol, and fills them through the UniswapX PriorityOrderReactor on Base.
+
+**Purpose:** Prove that any solver can opt into Reckon protection by (1) registering an ENS subname, (2) bonding USDC, and (3) filling orders that reference `ReckonValidator` as the `additionalValidationContract`. The demo solver is intentionally simple — it fills at quoted amounts without MEV extraction, making it a clean target for challenger agents to verify.
+
+**Architecture:**
+
+```
+solver/
+├── src/
+│   ├── index.ts        — Hono HTTP server (POST /fill, GET /health)
+│   ├── filler.ts       — PriorityOrderReactor.execute() with gas pricing
+│   ├── validate.ts     — Order decoding + validation (reactor, expiry, token pair, validator)
+│   └── bootstrap.ts    — Auto-registration + bond deposit on startup
+└── test/
+    └── swap-test.ts    — Swapper test script (creates + signs order, posts to solver)
+```
+
+**Modules:**
+
+| Module | Responsibility |
+|--------|---------------|
+| `index.ts` | HTTP entry point. Accepts `{encodedOrder, signature}`, decodes, validates, fills. Env-driven config. Triggers bootstrap on startup. |
+| `filler.ts` | Manages solver wallet, checks output token balance, ensures Permit2 approval on reactor, calls `execute(SignedOrder)` with explicit `maxFeePerGas ≥ block.basefee` (required by PriorityOrderReactor). Returns txHash + orderHash + fillBlock. |
+| `validate.ts` | Decodes the ABI-encoded PriorityOrder struct. Validates: correct reactor address, order not expired, `additionalValidationContract == ReckonValidator`, supported token pair (USDC↔WETH bidirectional). Rejects multi-output orders. |
+| `bootstrap.ts` | Runs on startup. Checks if solver has a registered ENS subname via `getEnsAddress()`. If not, requests registration from the relayer (`POST /register`). Then checks `SolverBondVault.bondedAmount(node)` — if below threshold (50 USDC), approves and deposits USDC. Non-blocking (logs warning on failure, solver continues). |
+
+**Flow:**
+
+1. Solver starts → `bootstrap.ts` ensures ENS registration + bond deposit
+2. Swapper creates a PriorityOrder with `additionalValidationContract = ReckonValidator` and `additionalValidationData = abi.encode(uint16 eboTolerance)`
+3. Swapper signs the order via Permit2 PermitWitnessTransferFrom (EIP-712 with PriorityOrder witness)
+4. Swapper POSTs `{encodedOrder, signature}` to solver's `/fill` endpoint
+5. Solver decodes + validates the order (token pair, expiry, reactor, validator)
+6. Solver calls `PriorityOrderReactor.execute(SignedOrder)` — reactor transfers input from swapper (via Permit2), solver provides output token
+7. Reactor calls `ReckonValidator.validate()` — view-only check that solver is registered in `SolverRegistry`
+8. Reactor emits `Fill(orderHash, filler, swapper, nonce)` — relayer picks this up for recording
+
+**Env vars:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SOLVER_PRIVATE_KEY` | Yes | Solver EOA private key (must be registered + bonded) |
+| `BASE_RPC_URL` | Yes | Base mainnet or Anvil fork RPC |
+| `RECKON_VALIDATOR_ADDRESS` | Yes | ReckonValidator contract on Base |
+| `PORT` | No | HTTP port (default 3000) |
+| `SOLVER_BOND_VAULT_ADDRESS` | No | Enables auto-bond on startup |
+| `RELAYER_URL` | No | Relayer endpoint for auto-registration |
+| `SOLVER_LABEL` | No | ENS label (e.g. `bunni` → `bunni.solvers.reckonprotocol.eth`) |
+
+**Key design decisions:**
+
+- **Bidirectional token pair:** Fills both USDC→WETH and WETH→USDC orders. Any order referencing ReckonValidator with a supported pair is eligible.
+- **Explicit gas pricing:** PriorityOrderReactor requires `tx.gasprice >= block.basefee`. The solver reads the current block's `baseFeePerGas` and sets `maxFeePerGas = baseFee + priorityFee` explicitly.
+- **Single-output only:** Rejects orders with `outputs.length != 1` (multi-output not supported in v1).
+- **No MEV extraction:** Fills at the order's quoted output amount. This is intentional — the solver is a clean reference implementation, not a competitive market maker.
+- **Bootstrap is non-blocking:** If registration or bonding fails (e.g. relayer down, insufficient USDC), the solver still starts and can fill orders if already registered from a prior session.
+
+---
 
 **Out of scope for hackathon:**
 - Multi-output orders (rejected in v1; outputs.length must equal 1)

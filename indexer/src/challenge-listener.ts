@@ -454,78 +454,144 @@ export async function startChallengeListener(
 }
 
 /**
- * Write a reputation delta to MongoDB. Each row is an immutable event.
- * The cumulative reputation for a node is the sum of all deltas.
+ * Record a reputation change.
+ *
+ * Two MongoDB writes happen here:
+ *
+ *   1. An immutable event row in `reputation_events` for audit/history.
+ *   2. An upsert into `reputation_updates` keyed by `solverNamehash` that
+ *      mirrors the aggregate state the CCIP-Read gateway reads to populate
+ *      the `reckon.reputation`, `reckon.totalFills`, `reckon.slashCount`,
+ *      and `reckon.lastSlash` text records (see `ccip-gateway/src/db.ts`).
+ *
+ * The aggregate is recomputed from the event log on every write so the two
+ * collections cannot drift. For our scale (handful of solvers, a few
+ * challenges per minute), this is fine; if it ever becomes hot, swap to
+ * an `$inc`-based upsert with a `BigInt`-safe encoding.
+ *
+ * Only invoked for SOLVER namehashes (filler from Challenge events). Text
+ * records are intentionally a solver-only surface; challenger agents are
+ * identified by their namehash but carry no reputation.
  */
 async function writeReputationDelta(
-  fillerNamehash: string,
+  solverNamehash: string,
   delta: bigint,
   orderHash: string,
-  reason: string,
+  reason: "challenge_succeeded" | "challenge_failed",
 ): Promise<void> {
   const db = await getDb();
-  const collection = db.collection(MONGO_COLLECTIONS.reputationUpdates);
-  await collection.insertOne({
-    fillerNamehash,
+  const events = db.collection(MONGO_COLLECTIONS.reputationEvents);
+  const aggregates = db.collection(MONGO_COLLECTIONS.reputationUpdates);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // 1. Immutable event log
+  await events.insertOne({
+    solverNamehash,
     delta: delta.toString(),
     orderHash,
     reason,
-    timestamp: Math.floor(Date.now() / 1000),
+    timestamp: nowSec,
   });
+
+  // 2. Recompute aggregate from event history
+  const allEvents = await events.find({ solverNamehash }).toArray();
+
+  const initial = 500_000_000_000_000_000n; // 0.5 starting reputation
+  let totalDelta = 0n;
+  let slashCount = 0;
+  let lastSlashTimestamp: number | null = null;
+
+  for (const ev of allEvents) {
+    totalDelta += BigInt(ev.delta);
+    if (ev.reason === "challenge_succeeded") {
+      slashCount += 1;
+      if (lastSlashTimestamp === null || ev.timestamp > lastSlashTimestamp) {
+        lastSlashTimestamp = ev.timestamp;
+      }
+    }
+  }
+
+  let reputationScore = initial + totalDelta;
+  if (reputationScore < 0n) reputationScore = 0n;
+  if (reputationScore > REPUTATION_SCALE) reputationScore = REPUTATION_SCALE;
+
+  // totalFills derived from the fills collection: every recorded fill counts,
+  // independent of challenge outcome
+  const fills = await getFillsCollection();
+  const totalFills = await fills.countDocuments({
+    fillerNamehash: solverNamehash as `0x${string}`,
+  });
+
+  // 3. Upsert aggregate doc — schema matches ccip-gateway/src/db.ts:
+  //    { solverNamehash, reputationScore, totalFills, slashCount,
+  //      lastSlashTimestamp, updatedAt }
+  await aggregates.updateOne(
+    { solverNamehash },
+    {
+      $set: {
+        solverNamehash,
+        reputationScore: reputationScore.toString(),
+        totalFills,
+        slashCount,
+        lastSlashTimestamp,
+        updatedAt: Date.now(),
+      },
+    },
+    { upsert: true },
+  );
+
   log.info(`Reputation delta written`, {
-    solver: fillerNamehash,
+    solver: solverNamehash,
     delta: delta.toString(),
     reason,
     orderHash,
+    newReputation: reputationScore.toString(),
+    slashCount,
+    totalFills,
   });
 }
 
 /**
- * Compute cumulative reputation for a node and flush to SolverRegistry on-chain.
- * reputation = clamp(initialRep + sum(deltas), 0, 1e18)
+ * Read the aggregate reputation for a solver and push it to SolverRegistry
+ * on-chain so `SolverBondVault.requiredBond` sees the updated decay value.
+ *
+ * The aggregate is maintained by `writeReputationDelta` — this just reads it.
  */
 async function flushReputation(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   walletClient: any,
   solverRegistryAddress: Address,
-  fillerNamehash: string,
+  solverNamehash: string,
 ): Promise<void> {
   try {
     const db = await getDb();
-    const collection = db.collection(MONGO_COLLECTIONS.reputationUpdates);
+    const aggregate = await db
+      .collection(MONGO_COLLECTIONS.reputationUpdates)
+      .findOne({ solverNamehash });
 
-    // Sum all deltas for this node
-    const docs = await collection.find({ fillerNamehash }).toArray();
-    let totalDelta = 0n;
-    for (const doc of docs) {
-      totalDelta += BigInt(doc.delta);
+    if (!aggregate) {
+      log.warn(`No aggregate to flush — skipping`, { solver: solverNamehash });
+      return;
     }
 
-    // Start from 500000000000000000 (0.5) as initial reputation
-    const initial = 500_000_000_000_000_000n;
-    let newRep = initial + totalDelta;
+    const newRep = BigInt(aggregate.reputationScore);
 
-    // Clamp to [0, 1e18]
-    if (newRep < 0n) newRep = 0n;
-    if (newRep > REPUTATION_SCALE) newRep = REPUTATION_SCALE;
-
-    // Write to chain
     await walletClient.writeContract({
       address: solverRegistryAddress,
       abi: SetTextABI,
       functionName: "setText",
-      args: [fillerNamehash as `0x${string}`, "reckon.reputation", newRep.toString()],
+      args: [solverNamehash as `0x${string}`, "reckon.reputation", newRep.toString()],
     });
 
     log.info(`Reputation flushed to chain`, {
-      solver: fillerNamehash,
+      solver: solverNamehash,
       newReputation: newRep.toString(),
-      totalDelta: totalDelta.toString(),
     });
   } catch (err: any) {
     const reason = err?.shortMessage ?? err?.message ?? "unknown";
     log.warn(`Reputation flush to chain FAILED: ${reason}`, {
-      solver: fillerNamehash,
+      solver: solverNamehash,
     });
   }
 }

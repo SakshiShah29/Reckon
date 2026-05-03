@@ -27,19 +27,22 @@ export async function createDb(uri: string): Promise<GatewayDb> {
 
       const textRecords: Record<string, string> = doc.textRecords ?? {};
 
-      const rep = await repUpdates.findOne(
-        { solverNamehash: node },
-        { sort: { updatedAt: -1 } }
-      );
-      if (rep) {
-        if (rep.reputationScore != null)
-          textRecords["reckon.reputation"] = String(rep.reputationScore);
-        if (rep.totalFills != null)
-          textRecords["reckon.totalFills"] = String(rep.totalFills);
-        if (rep.slashCount != null)
-          textRecords["reckon.slashCount"] = String(rep.slashCount);
-        if (rep.lastSlashTimestamp != null)
-          textRecords["reckon.lastSlash"] = String(rep.lastSlashTimestamp);
+      // Reputation text records (`reckon.reputation`, `reckon.totalFills`,
+      // `reckon.slashCount`, `reckon.lastSlash`) are a SOLVER-only surface.
+      // Challenger agents are identified by namehash but carry no
+      // reputation, so we don't enrich them.
+      if (doc.namespace === "solvers") {
+        const rep = await repUpdates.findOne({ solverNamehash: node });
+        if (rep) {
+          if (rep.reputationScore != null)
+            textRecords["reckon.reputation"] = String(rep.reputationScore);
+          if (rep.totalFills != null)
+            textRecords["reckon.totalFills"] = String(rep.totalFills);
+          if (rep.slashCount != null)
+            textRecords["reckon.slashCount"] = String(rep.slashCount);
+          if (rep.lastSlashTimestamp != null)
+            textRecords["reckon.lastSlash"] = String(rep.lastSlashTimestamp);
+        }
       }
 
       return {
