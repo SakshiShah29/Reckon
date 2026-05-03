@@ -13,6 +13,7 @@ import { decideChallenge } from "./decide.js";
 import { submitChallenge, type SubmitConfig } from "./submit.js";
 import type { FillRecord } from "@reckon-protocol/types";
 import { EBBO_PRECISION, BASE_SEPOLIA_CHAIN_ID } from "@reckon-protocol/types";
+import { log } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENT_ROOT = join(__dirname, "..");
@@ -51,13 +52,13 @@ const SUSPICION_THRESHOLD = 0.3;
  *   FillRecorded → triage.ts → ebbo.ts → coordinate.ts → decide.ts → submit.ts
  */
 async function main() {
-  console.log("=== Reckon Challenger Agent ===");
+  log.banner();
 
   const skillMd = loadSkillMd();
   if (skillMd) {
-    console.log("[orchestrator] SKILL.md loaded");
+    log.success("orchestrator", "SKILL.md loaded");
   } else {
-    console.log("[orchestrator] SKILL.md not found — running with defaults");
+    log.warn("orchestrator", "SKILL.md not found — running with defaults");
   }
 
   // ── Boot: read iNFT, decrypt brain ─────────────────────────
@@ -66,10 +67,10 @@ async function main() {
 
   try {
     agent = await bootAgent(config);
-    console.log("[boot] Brain decrypted successfully");
+    log.success("boot", "Brain decrypted successfully");
   } catch (err) {
     if (process.env["HEADLESS_MODE"] === "true") {
-      console.warn("[boot] Boot failed, running in headless mode:", err);
+      log.warn("boot", "Boot failed, running in headless mode", err);
       agent = {
         config,
         brain: {
@@ -81,8 +82,8 @@ async function main() {
         },
       };
     } else {
-      console.error("[boot] Fatal:", err instanceof Error ? err.message : err);
-      console.error("[boot] Set HEADLESS_MODE=true to bypass brain blob requirement.");
+      log.fatal("boot", "Cannot start agent", err);
+      log.info("boot", "Set HEADLESS_MODE=true to bypass brain blob requirement.");
       process.exit(1);
     }
   }
@@ -90,7 +91,7 @@ async function main() {
   // ── 0G Compute API key ──────────────────────────────────────
   const zgApiKey = process.env["ZG_API_KEY"] ?? "";
   if (!zgApiKey) {
-    console.warn("[orchestrator] ZG_API_KEY not set — triage will default to 0.5");
+    log.warn("orchestrator", "ZG_API_KEY not set — triage will default to 0.5");
   }
 
   // ── Coordinate config ──────────────────────────────────────
@@ -115,7 +116,7 @@ async function main() {
   };
 
   if (submitConfig.keeperHubWebhookUrl) {
-    console.log("[orchestrator] KeeperHub webhook mode enabled — challenges will be submitted via KeeperHub");
+    log.success("orchestrator", "KeeperHub webhook mode enabled");
   }
 
   // ── EBBO KeeperHub config ──────────────────────────────────
@@ -128,12 +129,12 @@ async function main() {
     : undefined;
 
   if (ebboKhConfig) {
-    console.log("[orchestrator] KeeperHub EBBO mode enabled — benchmark reads via KeeperHub");
+    log.success("orchestrator", "KeeperHub EBBO mode enabled");
   }
 
   // ── EBBO RPC — same as contracts chain (Base Sepolia) since test pool lives there ──
   const ebboRpcUrl = config.baseRpcUrl;
-  console.log("[orchestrator] EBBO + contracts both via Base Sepolia");
+  log.info("orchestrator", "EBBO + contracts both via Base Sepolia");
 
   // ── Base client for on-chain reads ─────────────────────────
   const baseClient = createPublicClient({
@@ -162,13 +163,13 @@ async function main() {
       challengerLabel,
     });
   } else {
-    console.log("[bootstrap] Skipped — set RELAYER_URL, CHALLENGER_LABEL, CHALLENGER_REGISTRY_ADDRESS, OWNER_REGISTRY_ADDRESS to enable");
+    log.info("bootstrap", "Skipped — set RELAYER_URL, CHALLENGER_LABEL, CHALLENGER_REGISTRY_ADDRESS, OWNER_REGISTRY_ADDRESS to enable");
   }
 
   // ── SKILL.md pipeline: per-fill handler ────────────────────
   async function handleFill(fill: FillRecord) {
     const tag = fill.orderHash.slice(0, 10);
-    console.log(`\n[orchestrator] ── Fill ${tag} ──`);
+    log.fill(tag);
 
     // Step 1: triage.ts — 0G Compute suspicion score
     let suspicionScore = 0.5;
@@ -177,23 +178,21 @@ async function main() {
       try {
         const triageResult = await runSuspicionTriage(fill, zgApiKey);
         suspicionScore = triageResult.score;
-        console.log(
-          `[triage] ${tag} score=${suspicionScore.toFixed(3)} model=${triageResult.model}`,
-        );
+        log.step("triage", tag, `score=${suspicionScore.toFixed(3)} model=${triageResult.model}`);
       } catch (err) {
-        console.warn(`[triage] ${tag} failed, defaulting to 0.5:`, err);
+        log.warn("triage", `${tag} failed, defaulting to 0.5`, err);
       }
     } else {
-      console.log(`[triage] ${tag} no API key, defaulting to 0.5`);
+      log.info("triage", `${tag} no API key, defaulting to 0.5`);
     }
 
     if (suspicionScore < SUSPICION_THRESHOLD) {
-      console.log(`[triage] ${tag} score below threshold, skipping`);
+      log.skip("triage", tag, `score ${suspicionScore.toFixed(3)} < threshold ${SUSPICION_THRESHOLD}`);
       return;
     }
 
     // Step 2: ebbo.ts — benchmark price via KeeperHub or direct RPC
-    console.log(`[ebbo] ${tag} computing benchmark...`);
+    log.step("ebbo", tag, "computing benchmark...");
     const ebboResult = ebboKhConfig
       ? await computeEBBOViaKeeperHub(
           fill.tokenIn as `0x${string}`,
@@ -215,13 +214,11 @@ async function main() {
     );
 
     if (!slashable) {
-      console.log(`[ebbo] ${tag} not slashable`);
+      log.skip("ebbo", tag, "not slashable — fill within tolerance");
       return;
     }
 
-    console.log(
-      `[ebbo] ${tag} SLASHABLE shortfall=${shortfall} expected=${expectedOutput}`,
-    );
+    log.slashable(tag, shortfall, expectedOutput);
 
     // Step 3: coordinate.ts — AXL gossip + 0G KV claim dedup
     const checkResult = await coordinate(
@@ -232,7 +229,7 @@ async function main() {
     );
 
     if (checkResult.claimedBy && checkResult.claimedBy !== config.tokenId) {
-      console.log(`[coordinate] ${tag} already claimed by ${checkResult.claimedBy}`);
+      log.skip("coordinate", tag, `already claimed by ${checkResult.claimedBy}`);
       return;
     }
 
@@ -244,13 +241,11 @@ async function main() {
     );
 
     if (!acquireResult.claimAcquired) {
-      console.log(
-        `[coordinate] ${tag} claim failed: ${acquireResult.reason} (claimed by ${acquireResult.claimedBy})`,
-      );
+      log.skip("coordinate", tag, `claim failed: ${acquireResult.reason} (claimed by ${acquireResult.claimedBy})`);
       return;
     }
 
-    console.log(`[coordinate] ${tag} claim acquired`);
+    log.step("coordinate", tag, "claim acquired");
 
     // Step 4: decide.ts — cost-benefit analysis
     let solverBond = 1000n * 10n ** 6n; // default 1000 USDC
@@ -264,14 +259,12 @@ async function main() {
         });
         solverBond = bondRaw;
       } catch (err) {
-        console.warn(`[decide] ${tag} bond read failed, using default:`, err);
+        log.warn("decide", `${tag} bond read failed, using default`, err);
       }
     }
 
     const decision = decideChallenge(fill, shortfall, solverBond, agent.brain);
-    console.log(
-      `[decide] ${tag} ${decision.shouldChallenge ? "CHALLENGE" : "SKIP"} — ${decision.reason}`,
-    );
+    log.decision(tag, decision.shouldChallenge, decision.reason);
 
     if (!decision.shouldChallenge) {
       await coordinate("release", fill.orderHash, config.tokenId, coordConfig);
@@ -290,12 +283,12 @@ async function main() {
 
     if (zgApiKey) {
       generateSlashExplanation(fill, benchmarkStr, actualStr, shortfallPct, zgApiKey)
-        .then((r) => console.log(`[submit] ${tag} NL: ${r.explanation}`))
+        .then((r) => log.explanation(tag, r.explanation))
         .catch(() => {});
     }
 
     // Step 5: submit.ts — direct on-chain challenge
-    console.log(`[submit] ${tag} submitting challenge on-chain...`);
+    log.step("submit", tag, "submitting challenge on-chain...");
     const result = await submitChallenge(
       fill.orderHash as `0x${string}`,
       config.tokenId,
@@ -304,9 +297,9 @@ async function main() {
     );
 
     if (result.success) {
-      console.log(`[submit] ${tag} challenge submitted! tx: ${result.txHash}`);
+      log.submitted(tag, result.txHash ?? "unknown");
     } else {
-      console.error(`[submit] ${tag} failed: ${result.error}`);
+      log.error("submit", `${tag} challenge failed: ${result.error}`);
     }
   }
 
@@ -319,12 +312,12 @@ async function main() {
 
   // ── Heartbeat ──────────────────────────────────────────────
   const heartbeatTimer = setInterval(() => {
-    console.log(`[orchestrator] heartbeat — alive, listening for fills`);
+    log.heartbeat();
   }, 30_000);
 
   // ── Graceful shutdown ──────────────────────────────────────
   const shutdown = () => {
-    console.log("\n[orchestrator] Shutting down...");
+    log.shutdown();
     clearInterval(heartbeatTimer);
     stopListener();
     process.exit(0);
@@ -333,7 +326,8 @@ async function main() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  console.log("[orchestrator] Running. Pipeline: triage → ebbo → coordinate → decide → submit");
+  log.pipeline();
+  log.success("orchestrator", "Running — waiting for fills...");
 }
 
 
@@ -345,6 +339,6 @@ function formatPrice(price1e18: bigint): string {
 }
 
 main().catch((err) => {
-  console.error("[orchestrator] Fatal:", err);
+  log.fatal("orchestrator", "Unhandled error", err);
   process.exit(1);
 });

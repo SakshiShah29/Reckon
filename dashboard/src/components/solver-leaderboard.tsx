@@ -72,7 +72,8 @@ export function SolverLeaderboard() {
           const pct = Math.min(score, 100);
           const color = RANK_COLORS[i % RANK_COLORS.length];
           const shadowColor = RANK_SHADOWS[i % RANK_SHADOWS.length];
-          const truncHash = `${s.solverNamehash.slice(0, 6)}\u2026${s.solverNamehash.slice(-4)}`;
+          const hash = s.solverNamehash ?? "";
+          const truncHash = hash.length > 10 ? `${hash.slice(0, 6)}\u2026${hash.slice(-4)}` : hash || "unknown";
 
           // Progress ring
           const r = 16;
@@ -81,7 +82,7 @@ export function SolverLeaderboard() {
 
           return (
             <div
-              key={s.solverNamehash}
+              key={s.solverNamehash ?? i}
               className="flex items-center gap-3 p-2.5 rounded-xl border-2 border-[#E2E8F0] hover:border-[#1E293B] transition-all duration-200"
               style={{ boxShadow: `0 0 0 transparent` }}
               onMouseEnter={(e) => (e.currentTarget.style.boxShadow = `4px 4px 0 ${shadowColor}`)}

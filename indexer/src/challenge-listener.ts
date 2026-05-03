@@ -4,6 +4,7 @@ import {
   http,
   defineChain,
   parseAbiItem,
+  decodeEventLog,
   type Address,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -36,6 +37,14 @@ const ChallengeSucceededEvent = parseAbiItem(
 
 const ChallengeFailedEvent = parseAbiItem(
   "event ChallengeFailed(bytes32 indexed orderHash, bytes32 indexed fillerNamehash, address challenger)",
+);
+
+const ChallengeSubmittedEvent = parseAbiItem(
+  "event ChallengeSubmitted(bytes32 indexed orderHash, bytes32 indexed challengerNode, uint256 agentTokenId, uint256 challengerBond)",
+);
+
+const RoyaltyPaidEvent = parseAbiItem(
+  "event RoyaltyPaid(uint256 indexed tokenId, address indexed swapper, uint256 swapperAmt, uint256 ownerAmt, uint256 protocolAmt)",
 );
 
 // ── ABI for SolverRegistry.setText() ────────────────────────────
@@ -167,6 +176,52 @@ export async function startChallengeListener(
             tx: logEntry.transactionHash,
           });
 
+          // Parse the tx receipt to get ChallengeSubmitted (agentTokenId) and RoyaltyPaid (actual split)
+          let agentTokenId = "";
+          let challengerBond = 0n;
+          let royaltySwapper = 0n;
+          let royaltyOwner = 0n;
+          let royaltyProtocol = 0n;
+          let challengerAddress = "";
+          try {
+            const receipt = await publicClient.getTransactionReceipt({ hash: logEntry.transactionHash });
+            challengerAddress = receipt.from;
+            for (const rxLog of receipt.logs) {
+              try {
+                // Try ChallengeSubmitted
+                const submittedTopicHash = "0xe78dcfab"; // first 4 bytes not needed for topic matching
+                if (rxLog.topics[0] === "0x" + "e78dcfab" + "0".repeat(56)) continue; // skip — use full keccak below
+                // Parse all logs against ChallengeSubmitted
+                                try {
+                  const decoded = decodeEventLog({
+                    abi: [ChallengeSubmittedEvent],
+                    data: rxLog.data,
+                    topics: rxLog.topics,
+                  });
+                  if (decoded.eventName === "ChallengeSubmitted") {
+                    agentTokenId = decoded.args.agentTokenId.toString();
+                    challengerBond = decoded.args.challengerBond;
+                  }
+                } catch { /* not this event */ }
+                // Parse RoyaltyPaid
+                try {
+                  const decoded = decodeEventLog({
+                    abi: [RoyaltyPaidEvent],
+                    data: rxLog.data,
+                    topics: rxLog.topics,
+                  });
+                  if (decoded.eventName === "RoyaltyPaid") {
+                    royaltySwapper = decoded.args.swapperAmt;
+                    royaltyOwner = decoded.args.ownerAmt;
+                    royaltyProtocol = decoded.args.protocolAmt;
+                  }
+                } catch { /* not this event */ }
+              } catch { /* skip unparseable log */ }
+            }
+          } catch (err) {
+            log.warn(`${tag} Failed to parse tx receipt for extra data: ${err}`);
+          }
+
           const db = await getDb();
           const fills = await getFillsCollection();
 
@@ -185,14 +240,15 @@ export async function startChallengeListener(
             {
               $set: {
                 orderHash,
-                challengerAddress: challengerNode,
+                challengerAddress: challengerAddress || challengerNode,
                 challengerNamehash: challengerNode,
-                agentTokenId: "",
-                benchmarkOutput: "",
+                agentTokenId,
+                benchmarkOutput: (fill as Record<string, unknown>)?.benchmarkOutput as string ?? "",
                 actualOutput: fill?.outputAmount ?? "",
                 eboToleranceBps: fill?.eboToleranceBps ?? 0,
                 succeeded: true,
                 slashAmount: slashAmount.toString(),
+                challengerBond: challengerBond.toString(),
                 challengeBlock: Number(logEntry.blockNumber),
                 challengeTimestamp: Math.floor(Date.now() / 1000),
                 txHash: logEntry.transactionHash,
@@ -201,10 +257,10 @@ export async function startChallengeListener(
             { upsert: true },
           );
 
-          // Write to slashes collection (60/30/10 split)
-          const swapperRestitution = (slashAmount * 6000n) / 10000n;
-          const ownerBounty = (slashAmount * 3000n) / 10000n;
-          const protocolCut = slashAmount - swapperRestitution - ownerBounty;
+          // Write to slashes collection — prefer on-chain RoyaltyPaid if available, else compute 60/30/10
+          const swapperRestitution = royaltySwapper > 0n ? royaltySwapper : (slashAmount * 6000n) / 10000n;
+          const ownerBounty = royaltyOwner > 0n ? royaltyOwner : (slashAmount * 3000n) / 10000n;
+          const protocolCut = royaltyProtocol > 0n ? royaltyProtocol : slashAmount - swapperRestitution - ownerBounty;
 
           await db.collection(MONGO_COLLECTIONS.slashes).updateOne(
             { orderHash },
@@ -213,11 +269,12 @@ export async function startChallengeListener(
                 orderHash,
                 solverNamehash: fillerNamehash,
                 challengerNamehash: challengerNode,
-                agentTokenId: "",
+                agentTokenId,
                 slashAmount: slashAmount.toString(),
                 swapperRestitution: swapperRestitution.toString(),
                 ownerBounty: ownerBounty.toString(),
                 protocolCut: protocolCut.toString(),
+                challengerBond: challengerBond.toString(),
                 nlExplanation: "",
                 timestamp: Math.floor(Date.now() / 1000),
                 txHash: logEntry.transactionHash,
@@ -259,8 +316,27 @@ export async function startChallengeListener(
             tx: logEntry.transactionHash,
           });
 
+          // Parse tx receipt for ChallengeSubmitted (agentTokenId)
+          let failedAgentTokenId = "";
+          try {
+            const receipt = await publicClient.getTransactionReceipt({ hash: logEntry.transactionHash });
+                        for (const rxLog of receipt.logs) {
+              try {
+                const decoded = decodeEventLog({
+                  abi: [ChallengeSubmittedEvent],
+                  data: rxLog.data,
+                  topics: rxLog.topics,
+                });
+                if (decoded.eventName === "ChallengeSubmitted") {
+                  failedAgentTokenId = decoded.args.agentTokenId.toString();
+                }
+              } catch { /* not this event */ }
+            }
+          } catch { /* receipt fetch failed */ }
+
           const db = await getDb();
           const fills = await getFillsCollection();
+          const fill = await fills.findOne({ orderHash });
 
           // Mark fill as defended
           await fills.updateOne(
@@ -276,10 +352,10 @@ export async function startChallengeListener(
                 orderHash,
                 challengerAddress: logEntry.args.challenger ?? "",
                 challengerNamehash: "",
-                agentTokenId: "",
-                benchmarkOutput: "",
-                actualOutput: "",
-                eboToleranceBps: 0,
+                agentTokenId: failedAgentTokenId,
+                benchmarkOutput: (fill as Record<string, unknown>)?.benchmarkOutput as string ?? "",
+                actualOutput: fill?.outputAmount ?? "",
+                eboToleranceBps: fill?.eboToleranceBps ?? 0,
                 succeeded: false,
                 slashAmount: "0",
                 challengeBlock: Number(logEntry.blockNumber),

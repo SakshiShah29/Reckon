@@ -7,6 +7,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 const navTabs = [
   { label: "Dashboard", href: "/", icon: "grid" },
   { label: "Swap", href: "/swap", icon: "swap" },
+  { label: "Adjudication", href: "/adjudication", icon: "shield" },
   { label: "Register", href: "/register", icon: "user" },
   { label: "0G", href: "/zero-g", icon: "cloud" },
 ];
